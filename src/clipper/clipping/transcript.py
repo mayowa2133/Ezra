@@ -88,8 +88,21 @@ def page(t: Transcript, start: float = 0.0, max_chars: int = 30000) -> dict[str,
             "next_start": next_start, "text": "\n".join(lines)}
 
 
+def join_words(tokens: list[str]) -> str:
+    """Join ASR tokens, gluing pieces Whisper splits off ("$400" ",000", "40" "%")."""
+    out = ""
+    for tok in (t.strip() for t in tokens):
+        if not tok:
+            continue
+        if out and (tok[0] in ",.!?;:%)'’" or (tok[0] == "-" and out[-1].isdigit())):
+            out += tok
+        else:
+            out += (" " if out else "") + tok
+    return out
+
+
 def window_text(t: Transcript, start: float, end: float) -> str:
-    return " ".join(w.w.strip() for w in t.words if w.e > start and w.s < end).strip()
+    return join_words([w.w for w in t.words if w.e > start and w.s < end])
 
 
 def snap(t: Transcript, start: float, end: float) -> tuple[float, float]:

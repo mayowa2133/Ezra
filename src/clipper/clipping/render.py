@@ -20,7 +20,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .transcript import Transcript, Word
+from .transcript import Transcript, Word, join_words
 
 W, H = 1080, 1920
 CAPTION_Y = int(H * 0.66)
@@ -80,7 +80,7 @@ def caption_chunks(words: list[Word], clip_start: float, clip_end: float,
             nxt = chunks[i + 1][0].s - clip_start
             if nxt - end < 0.35:  # bridge short gaps so captions don't flicker
                 end = nxt
-        caps.append(Caption(" ".join(x.w.strip() for x in ch), round(start, 3), round(min(end, dur), 3)))
+        caps.append(Caption(join_words([x.w for x in ch]), round(start, 3), round(min(end, dur), 3)))
     return caps
 
 
@@ -139,7 +139,7 @@ def build_command(src: str, out: Path, start: float, end: float, framing: str, c
     inputs = ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", src]
     for i, (png, a, b, y) in enumerate(overlays, start=1):
         inputs += ["-i", str(png)]
-        parts.append(f"[v{i-1}][{i}:v]overlay=x=(W-w)/2:y={y}:enable='between(t,{a:.3f},{b:.3f})'[v{i}]")
+        parts.append(f"[v{i-1}][{i}:v]overlay=x=(W-w)/2:y={y}:enable='gte(t,{a:.3f})*lt(t,{b:.3f})'[v{i}]")
     last = f"[v{len(overlays)}]"
     return ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs,
             "-filter_complex", ";".join(parts), "-map", last, "-map", "0:a?",

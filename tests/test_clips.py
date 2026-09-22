@@ -93,3 +93,19 @@ def test_render_review_copy_revenue_insights(campaign):
 def test_spearman():
     assert insights.spearman([1, 2, 3, 4], [10, 20, 30, 40]) == 1.0
     assert insights.spearman([1, 2, 3, 4], [40, 30, 20, 10]) == -1.0
+
+
+def test_join_words_glues_split_tokens():
+    from clipper.clipping.transcript import join_words
+    assert join_words(["I", "lost", "$400", ",000", "overnight,", "40", "%", "of", "it."]) == \
+        "I lost $400,000 overnight, 40% of it."
+
+
+def test_caption_overlays_never_overlap():
+    """Adjacent captions share a boundary; overlay windows must be half-open."""
+    from pathlib import Path
+    from clipper.clipping.render import build_command
+    cmd = build_command("in.mp4", Path("out.mp4"), 0, 10, "crop", 0.5,
+                        [(Path("a.png"), 0.0, 1.5, 100), (Path("b.png"), 1.5, 3.0, 100)])
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    assert "between(" not in graph and "lt(t,1.500)" in graph and "gte(t,1.500)" in graph
