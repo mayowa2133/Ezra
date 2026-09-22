@@ -1,0 +1,25 @@
+# clipper itself runs on your machine (uv run clipper ...). This file only starts the
+# optional OpenShorts backend, used by `clipper run --openshorts` / the run_openshorts tool.
+#
+#   docker compose --profile openshorts up -d
+#
+# OpenShorts needs its own moment-picker model: either GEMINI_API_KEY, or a local
+# OpenAI-compatible server such as Ollama (LLM_BASE_URL below, no API key needed).
+services:
+  openshorts:
+    profiles: [openshorts]
+    build: https://github.com/mutonby/openshorts.git
+    container_name: openshorts-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - LLM_BASE_URL=${OPENSHORTS_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      - LLM_MODEL=${OPENSHORTS_LLM_MODEL:-qwen2.5:14b}
+      - RATE_LIMIT_ENABLED=0
+    volumes:
+      - openshorts-output:/app/output
+    restart: unless-stopped
+
+volumes:
+  openshorts-output:

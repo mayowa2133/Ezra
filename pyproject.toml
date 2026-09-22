@@ -1,7 +1,7 @@
 [project]
 name = "clipper"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local clipping operator: campaign footage in, agent-judged short clips out, performance fed back"
 authors = [
     { name = "mayowa2133", email = "adesanym@mcmaster.ca" }
 ]

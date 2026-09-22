@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "clipper": {
+      "command": "uv",
+      "args": ["run", "clipper", "mcp"]
+    }
+  }
+}

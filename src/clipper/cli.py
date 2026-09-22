@@ -51,8 +51,12 @@ def campaign_create(path: Path) -> None:
     spec = campaigns.parse_yaml(path.read_text())
     camp = campaigns.create(spec, base_dir=path.parent.resolve())
     console.print(f"campaign [bold]{camp['slug']}[/] (id {camp['id']}): {spec.name}, CPM ${spec.rate.cpm:.2f}")
-    for s in sources.list_for(camp["slug"]):
+    registered = sources.list_for(camp["slug"])
+    for s in registered:
         console.print(f"  source {s['id']}: {s['path']}")
+    if len(spec.source) > len(registered):
+        console.print(f"[yellow]{len(spec.source) - len(registered)} listed source(s) not found; "
+                      f"add them with `clipper source add {camp['slug']} <path>`[/]")
 
 
 @campaign_app.command("list")
