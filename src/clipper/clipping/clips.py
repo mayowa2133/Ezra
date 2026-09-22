@@ -49,7 +49,8 @@ def get(clip_id: int) -> dict[str, Any]:
 
 
 def add_candidates(source_id: int, candidates: list[Candidate], origin: str = "agent",
-                   transcript: Transcript | None = None) -> list[dict[str, Any]]:
+                   transcript: Transcript | None = None, snap_bounds: bool = True,
+                   origin_refs: list[str | None] | None = None) -> list[dict[str, Any]]:
     """Snap, check and store candidates. Returns what was stored, including the
     exact words each cut now starts with, so the agent can verify its hook."""
     src = sources.get(source_id)
@@ -57,9 +58,9 @@ def add_candidates(source_id: int, candidates: list[Candidate], origin: str = "a
     t = transcript or for_source(source_id)
     out: list[dict[str, Any]] = []
     with db.connect() as conn:
-        for c in candidates:
+        for i, c in enumerate(candidates):
             try:
-                start, end = snap(t, c.start, c.end)
+                start, end = snap(t, c.start, c.end) if snap_bounds else (c.start, c.end)
             except ValueError as e:
                 out.append({"title": c.title, "error": str(e)})
                 continue
@@ -69,11 +70,14 @@ def add_candidates(source_id: int, candidates: list[Candidate], origin: str = "a
             status = "rejected_compliance" if issues else "candidate"
             cur = conn.execute(
                 "INSERT INTO clips (campaign_id, source_id, start_time, end_time, title, hook_text, "
-                "hook_type, topic, opening_words, transcript, rationale, origin, compliance_issues, "
-                "framing, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "hook_type, topic, opening_words, transcript, rationale, origin, origin_ref, "
+                "compliance_issues, framing, status, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (src["campaign_id"], source_id, start, end, c.title, c.hook_text, hook_type, c.topic,
-                 " ".join(text.split()[:8]), text, c.rationale, origin, db.dumps(issues),
-                 c.framing if c.framing in ("crop", "blur") else "crop", status, db.now(), db.now()))
+                 " ".join(text.split()[:8]), text, c.rationale, origin,
+                 (origin_refs or [None] * len(candidates))[i], db.dumps(issues),
+                 c.framing if c.framing in ("crop", "blur", "openshorts") else "crop",
+                 status, db.now(), db.now()))
             out.append({"clip_id": cur.lastrowid, "title": c.title, "start": start, "end": end,
                         "duration": round(end - start, 1), "opens_with": " ".join(text.split()[:12]),
                         "compliance_issues": issues, "status": status})
@@ -135,15 +139,21 @@ def render_clip(clip_id: int, framing: str | None = None, crop_x: float = 0.5) -
     if clip["status"] == "rejected_compliance":
         raise ValueError(f"clip {clip_id} failed compliance: {clip['compliance_issues']}")
     src = sources.get(clip["source_id"])
-    spec = campaigns.spec(clip["campaign_id"])
     framing = framing or clip["framing"] or "crop"
     out = settings().renders_dir / f"campaign-{clip['campaign_id']}" / f"clip-{clip_id}.mp4"
     update(clip_id, status="rendering", render_error=None, framing=framing)
     try:
-        t = for_source(clip["source_id"])
-        renderer.render(src["path"], out, clip["start_time"], clip["end_time"], t,
-                        framing=framing, crop_x=crop_x, captions=True,
-                        hook_text=clip["hook_text"], font_path=settings().font_path)
+        if clip["origin"] == "openshorts" and clip["origin_ref"] and framing == "openshorts":
+            from ..integrations import openshorts  # its render: face-tracked, captioned
+
+            openshorts.download_clip(clip["origin_ref"], out)
+        else:
+            if framing == "openshorts":
+                framing = "crop"
+            t = for_source(clip["source_id"])
+            renderer.render(src["path"], out, clip["start_time"], clip["end_time"], t,
+                            framing=framing, crop_x=crop_x, captions=True,
+                            hook_text=clip["hook_text"], font_path=settings().font_path)
     except Exception as e:
         update(clip_id, status="render_failed", render_error=str(e)[:1000])
         raise

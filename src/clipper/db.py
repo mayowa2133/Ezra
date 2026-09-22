@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS clips (
     transcript          TEXT,
     rationale           TEXT,
     origin              TEXT NOT NULL DEFAULT 'agent',
+    origin_ref          TEXT,
     ai_score            REAL,
     hook_score          REAL,
     retention_score     REAL,
