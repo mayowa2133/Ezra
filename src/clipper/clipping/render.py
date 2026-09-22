@@ -12,6 +12,7 @@ Framing:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -41,6 +42,15 @@ class Caption:
     text: str
     start: float  # relative to clip start
     end: float
+
+
+# System bold fonts have no emoji glyphs (they render as boxes), so burned-in
+# text drops them; the post captions keep them.
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
+
+
+def burnable(text: str) -> str:
+    return " ".join(_EMOJI.sub("", text).split())
 
 
 def _font(size: int, override: str | None = None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -88,7 +98,7 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[st
 def caption_png(text: str, path: Path, font_path: str | None = None) -> None:
     font = _font(78, font_path)
     probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    lines = _wrap(probe, text, font, W - 140)
+    lines = _wrap(probe, burnable(text), font, W - 140)
     line_h = int(font.size * 1.18)
     img = Image.new("RGBA", (W, line_h * len(lines) + 30), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -101,7 +111,7 @@ def caption_png(text: str, path: Path, font_path: str | None = None) -> None:
 def hook_png(text: str, path: Path, font_path: str | None = None) -> None:
     font = _font(58, font_path)
     probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    lines = _wrap(probe, text, font, W - 240)
+    lines = _wrap(probe, burnable(text), font, W - 240)
     line_h = int(font.size * 1.25)
     box_w = int(max(probe.textlength(l, font=font) for l in lines)) + 80
     box_h = line_h * len(lines) + 50
@@ -144,7 +154,7 @@ def render(src: str, out: Path, start: float, end: float, transcript: Transcript
     with tempfile.TemporaryDirectory(prefix="clipper-") as tmp:
         tmpdir = Path(tmp)
         overlays: list[tuple[Path, float, float, int]] = []
-        if hook_text:
+        if hook_text and burnable(hook_text):
             p = tmpdir / "hook.png"
             hook_png(hook_text, p, font_path)
             overlays.append((p, 0.0, min(HOOK_SECONDS, end - start), HOOK_Y))
