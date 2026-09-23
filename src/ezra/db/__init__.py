@@ -55,8 +55,12 @@ def migrate() -> None:
     url = get_settings().db_url
     if url in _migrated:
         return
+    import logging
+
     from alembic import command
     from alembic.config import Config
+
+    logging.getLogger("alembic").setLevel(logging.WARNING)
 
     cfg = Config()
     cfg.set_main_option("script_location", str(Path(__file__).parent / "migrations"))

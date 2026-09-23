@@ -1,0 +1,36 @@
+# Demo campaign for the end-to-end walkthrough (README "Quick start").
+# Everything here becomes normalized fields + enforceable rules; see docs/CAMPAIGNS.md.
+campaign:
+  id: demo
+  name: Founder Stories (demo)
+  provider: Example clipping programme
+  description: Short clips from a founder interview podcast.
+  brief: >
+    Founder stories with real stakes: money lost, near-quitting, hard lessons,
+    contrarian takes on fundraising.
+  source_authorization: campaign_supplied
+
+  payout_type: cpm
+  cpm: 2.00                     # USD per 1,000 qualified views
+  minimum_views: 5000           # a post below this earns nothing
+  maximum_payout: 1000          # cap per clip
+  budget: 5000                  # campaign-wide cap
+  tracking_window_days: 30
+
+  platforms: [tiktok, instagram, youtube]
+  min_duration: 15
+  max_duration: 60
+
+  hashtags: ["#founderstories"]
+  mentions: []
+  cta: null
+  subtitles_required: true
+  logo_required: false
+
+  forbidden: [profanity, competitor mentions]
+  competitors: [Acme Ventures]
+  forbidden_topics: [politics]
+  posting_limits: {per_day: 6, per_platform_per_day: {tiktok: 3, instagram: 3, youtube: 3}}
+  human_approval_required: true
+  rules:
+    - Do not present financial advice as a guarantee.

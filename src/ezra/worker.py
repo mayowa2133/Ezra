@@ -94,10 +94,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--kinds", help="comma list of job kinds to take")
     ap.add_argument("--once", action="store_true", help="drain due jobs, then exit")
     args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if args.run_job:
+        # child of a worker or CLI: progress and logs go to the job record, not the terminal
+        logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s %(message)s")
         jobs.run(jobs.get(args.run_job))
         return
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    for noisy in ("alembic", "httpx", "faster_whisper", "pyscenedetect"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     db.migrate()
     run_forever(kinds=args.kinds.split(",") if args.kinds else None, once=args.once)
 

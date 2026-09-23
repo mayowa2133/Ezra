@@ -1,7 +1,7 @@
 [project]
-name = "clipper"
+name = "ezra"
 version = "0.1.0"
-description = "Local clipping operator: campaign footage in, agent-judged short clips out, performance fed back"
+description = "Agent-native short-form clipping and performance optimization for performance-based campaigns"
 authors = [
     { name = "mayowa2133", email = "adesanym@mcmaster.ca" }
 ]
@@ -28,6 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
+ezra = "ezra.cli:main"
 clipper = "clipper:main"
 
 [project.optional-dependencies]
