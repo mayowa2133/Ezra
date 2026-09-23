@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
@@ -58,17 +59,35 @@ def migrate() -> None:
     import logging
 
     from alembic import command
-    from alembic.config import Config
 
     logging.getLogger("alembic").setLevel(logging.WARNING)
 
-    cfg = Config()
-    cfg.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", url)
+    cfg = alembic_config(url)
     with engine().begin() as conn:
         cfg.attributes["connection"] = conn
         command.upgrade(cfg, "head")
     _migrated.add(url)
+
+
+def alembic_config(url: str | None = None) -> Any:
+    from alembic.config import Config
+
+    cfg = Config()
+    cfg.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", url or get_settings().db_url)
+    return cfg
+
+
+def revision(message: str) -> str:
+    """Autogenerate a migration from the models against the current (migrated) database."""
+    from alembic import command
+
+    migrate()
+    cfg = alembic_config()
+    with engine().begin() as conn:
+        cfg.attributes["connection"] = conn
+        script = command.revision(cfg, message=message, autogenerate=True)
+    return str(getattr(script, "path", script))
 
 
 @contextmanager

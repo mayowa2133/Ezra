@@ -95,3 +95,19 @@ def test_assign_speakers_by_overlap():
     words = [Word("a", 0, 0.5), Word("b", 1.0, 1.4), Word("c", 3.0, 3.5)]
     assign_speakers(words, [Turn(0, 1.2, "S1"), Turn(1.2, 5, "S2")])
     assert [w.spk for w in words] == ["S1", "S1", "S2"]
+
+
+def test_cluster_defaults_to_one_speaker_without_a_real_split():
+    import numpy as np
+
+    from ezra.diarization import cluster
+
+    rng = np.random.default_rng(0)
+    one = rng.normal(0, 1, (120, 40))                       # one voice: a single diffuse blob
+    labels, _ = cluster(one)
+    assert len(set(labels.tolist())) == 1
+    a = rng.normal(0, 1, (60, 40)) + np.r_[np.full(20, 3.0), np.zeros(20)]
+    b = rng.normal(0, 1, (60, 40)) + np.r_[np.zeros(20), np.full(20, 3.0)]
+    labels, conf = cluster(np.vstack([a, b]))               # two distinct voices
+    assert len(set(labels.tolist())) == 2 and conf > 0.25
+    assert (labels[:60] == labels[0]).mean() > 0.95 and (labels[60:] == labels[60]).mean() > 0.95

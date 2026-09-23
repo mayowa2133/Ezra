@@ -35,7 +35,7 @@ PLATFORMS = {"tiktok", "instagram", "youtube", "x", "linkedin", "facebook", "thr
 
 class CampaignSpec(BaseModel):
     """Import schema. Accepts the nested YAML shape (rate.cpm, requirements.*)
-    and flat fields alike; see campaigns/example.yaml."""
+    and flat fields alike; see campaigns/demo-campaign.yaml and docs/CAMPAIGNS.md."""
     id: str | None = Field(None, description="Slug; derived from name when omitted")
     name: str
     description: str | None = None

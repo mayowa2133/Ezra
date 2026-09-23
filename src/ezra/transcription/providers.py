@@ -72,7 +72,7 @@ class WhisperXProvider(TranscriptionProvider):
         try:
             import whisperx
         except ImportError as e:
-            raise RuntimeError("WhisperX is not installed: `uv sync --extra whisperx` "
+            raise RuntimeError("WhisperX is not installed: `uv pip install whisperx` "
                                "(pulls PyTorch; see docs/DEPLOYMENT.md)") from e
         audio = whisperx.load_audio(str(media))
         model = whisperx.load_model(self.model, self.device, compute_type=self.compute,

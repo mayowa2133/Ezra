@@ -139,3 +139,24 @@ def test_real_render_split_layout_with_captions(tmp_path):
     assert top[0] > 180 and top[2] < 80, top
     assert bottom[2] > 180 and bottom[0] < 80, bottom
     assert res.srt and res.srt.read_text().count("-->") == 2   # 10 words in 6-word subtitle chunks
+
+
+def test_refine_boundaries_moves_cuts_to_the_quiet_gap():
+    from ezra.render import edl
+    from ezra.transcription.base import Word
+
+    # previous word audibly ends at 10.05 although ASR says 9.95; next word starts at 10.20
+    words = [Word("everyone.", 9.4, 9.95), Word("What", 10.2, 10.4), Word("now?", 10.45, 10.9),
+             Word("Next", 11.4, 11.7)]
+    times = [round(9.8 + i * 0.005, 4) for i in range(400)]
+    loud = [(9.4, 10.05), (10.2, 10.9), (11.4, 11.7)]
+    energy = [1000.0 if any(a <= t <= b for a, b in loud) else 5.0 for t in times]
+    pieces = [edl.Piece(9.95, 11.0)]            # snap: prev word end .. last word end + pad
+    out, moved = edl.refine_boundaries(pieces, words, times, energy)
+    assert moved >= 1
+    assert 10.05 < out[0].src_start <= 10.2      # the tail of "everyone." is no longer in the clip
+    assert 10.9 <= out[0].src_end < 11.4         # never into the next word
+    # an already-quiet boundary stays put
+    quiet = [5.0] * len(times)
+    same, n = edl.refine_boundaries(pieces, words, times, quiet)
+    assert n == 0 and same[0].src_start == 9.95

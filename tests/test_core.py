@@ -125,3 +125,17 @@ def test_secrets_are_encrypted_and_env_wins(monkeypatch, ezra_home):
     assert secrets.get("upload-post") == "from-env"
     with pytest.raises(secrets.SecretError):
         secrets.require("pexels", "B-roll search")
+
+
+def test_migrations_match_the_models():
+    """An autogenerate against a freshly migrated DB finds nothing: models and migrations agree."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    from ezra import db
+    from ezra.db.models import Base
+
+    db.migrate()
+    with db.engine().connect() as conn:
+        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+    assert diff == [], diff

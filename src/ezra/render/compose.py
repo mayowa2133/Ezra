@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 import tempfile
@@ -70,6 +71,42 @@ def probe(path: Path) -> dict[str, Any]:
             "has_audio": any(s["codec_type"] == "audio" for s in d["streams"])}
 
 
+def audio_energy(src: Path, t0: float, t1: float, rate: int = 16000) -> tuple[list[float], list[float]]:
+    """RMS energy of the source audio in 5 ms frames over [t0, t1] (frame centre times)."""
+    out = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t0:.3f}", "-t", f"{t1 - t0:.3f}", "-i", str(src),
+                          "-vn", "-ac", "1", "-ar", str(rate), "-f", "s16le", "-"], capture_output=True, check=False)
+    pcm = np.frombuffer(out.stdout, dtype=np.int16).astype(np.float32)
+    n = int(rate * edl.FRAME)
+    frames = len(pcm) // n
+    if out.returncode != 0 or frames == 0:
+        return [], []
+    rms = np.sqrt((pcm[: frames * n].reshape(frames, n) ** 2).mean(axis=1))
+    times = t0 + (np.arange(frames) + 0.5) * edl.FRAME
+    return [round(float(t), 4) for t in times], [float(x) for x in rms]
+
+
+LOUDNESS = {"I": -14.0, "TP": -1.5, "LRA": 11.0}    # short-form platforms normalise to about -14 LUFS
+
+
+def loudnorm_filter(in_args: list[str]) -> str:
+    """Two-pass loudnorm: measure the clip's audio, then normalise linearly to the
+    target. Single-pass (dynamic) loudnorm undershoots short clips by 1-2 LU."""
+    target = f"I={LOUDNESS['I']}:TP={LOUDNESS['TP']}:LRA={LOUDNESS['LRA']}"
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", *in_args, "-vn", "-af",
+                          f"loudnorm={target}:print_format=json", "-f", "null", "-"],
+                         capture_output=True, text=True, check=False)
+    try:
+        m = json.loads(out.stderr[out.stderr.rindex("{"):out.stderr.rindex("}") + 1])
+        measured = (f"measured_I={float(m['input_i'])}:measured_TP={float(m['input_tp'])}:"
+                    f"measured_LRA={float(m['input_lra'])}:measured_thresh={float(m['input_thresh'])}:"
+                    f"offset={float(m['target_offset'])}")
+    except (ValueError, KeyError):   # silent or unmeasurable audio: fall back to single pass
+        return f"loudnorm={target}"
+    if not all(map(math.isfinite, (float(m["input_i"]), float(m["input_tp"])))):
+        return f"loudnorm={target}"
+    return f"loudnorm={target}:{measured}:linear=true"
+
+
 def cut_media(src: Path, pieces: list[edl.Piece], out: Path, has_audio: bool) -> Path:
     """Trim + concat the EDL pieces into one constant-frame-rate intermediate.
     Input seeking starts near the first piece; trims are relative to that seek."""
@@ -80,7 +117,9 @@ def cut_media(src: Path, pieces: list[edl.Piece], out: Path, has_audio: bool) ->
         parts.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS,fps={FPS}[v{i}]")
         labels.append(f"[v{i}]")
         if has_audio:
-            parts.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{i}]")
+            fade = min(0.01, (b - a) / 4)   # 10 ms fades: no clicks at the joins
+            parts.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS,"
+                         f"afade=t=in:d={fade:.3f},afade=t=out:st={b - a - fade:.3f}:d={fade:.3f}[a{i}]")
             labels.append(f"[a{i}]")
     parts.append("".join(labels) + f"concat=n={len(pieces)}:v=1:a={1 if has_audio else 0}"
                  + ("[v][a]" if has_audio else "[v]"))
@@ -115,8 +154,13 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         # 1. edit decision list -------------------------------------------------------------
         pieces, summary = edl.build(words, start, end, spec.remove_silence, spec.silence_threshold,
                                     spec.remove_fillers)
+        moved = 0
+        if has_audio:
+            times, energy = audio_energy(src, max(0.0, start - edl.SEARCH), end + edl.SEARCH)
+            pieces, moved = edl.refine_boundaries(pieces, words, times, energy)
+        summary["boundaries_refined"] = moved
         duration = edl.output_duration(pieces)
-        edited = len(pieces) > 1 or summary["removed_seconds"] > 0.01
+        edited = len(pieces) > 1 or summary["removed_seconds"] > 0.01 or moved > 0
         say(0.05, "cutting")
         if edited:
             media = cut_media(src, pieces, tdir / "cut", has_audio)
@@ -276,7 +320,7 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         graph.append(f"[{cur}]format=yuv420p[vout]")
         maps = ["-map", "[vout]"]
         if has_audio:
-            af = "loudnorm=I=-14:TP=-1.5:LRA=11," if spec.normalize_audio else ""
+            af = loudnorm_filter(in_args) + "," if spec.normalize_audio else ""
             # explicit output format: older ffmpeg (Debian 5.1) cannot negotiate a layout for
             # mono sources whose channel layout is unset
             graph.append(f"[0:a]{af}aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:"
@@ -328,10 +372,19 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         ass.write_text(cap.to_ass(out_words, spec.caption_theme, W, H))
     real = probe(out)
     return RenderResult(out, real["duration"], W, H, layout.summary(plans),
-                        {**summary, "scenes": [{"start": p.start, "end": p.end, "mode": p.mode, "faces": p.faces}
-                                               for p in plans],
+                        {**summary, "scenes": [_scene_summary(p) for p in plans],
                          "punch_in": zoom_ranges, "broll": [b.model_dump() for b in spec.broll]},
                         srt, ass, thumb, out_words, time.time() - t0)
+
+
+def _scene_summary(p: layout.ScenePlan) -> dict[str, Any]:
+    """What the reframer decided for one scene (crop centres as fractions of source width)."""
+    d: dict[str, Any] = {"start": round(p.start, 3), "end": round(p.end, 3), "mode": p.mode, "faces": p.faces}
+    if p.mode == "track":
+        d["shots"] = [[round(sh.start, 2), round(sh.end, 2), round(sh.x, 4)] for sh in p.shots]
+    if p.split_x:
+        d["split_x"] = [round(x, 4) for x in p.split_x]
+    return d
 
 
 def _bookend(body: Path, intro: Path | None, outro: Path | None, W: int, H: int, out: Path) -> Path:

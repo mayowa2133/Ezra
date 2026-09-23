@@ -21,6 +21,7 @@ from sqlalchemy import delete, select
 
 from . import analysis, campaigns, compliance, db, economics, llm, sources
 from . import analytics as perf
+from .config import get_settings
 from .db.models import Campaign, Candidate, Clip
 from .scoring import heuristic
 from .scoring.features import Window, extract
@@ -41,6 +42,7 @@ def scout_windows(source_id: int, segments: list[Segment], topics: list[dict[str
     """Every sentence start, at three target lengths, ending on a sentence end
     inside [min_d, max_d]."""
     targets = sorted({round(min_d + (max_d - min_d) * f, 1) for f in (0.15, 0.4, 0.75)})
+    host = _questioner(segments)
     out: list[Window] = []
     seen: set[tuple[int, int]] = set()
     for i in range(len(segments)):
@@ -62,6 +64,18 @@ def scout_windows(source_id: int, segments: list[Segment], topics: list[dict[str
             while k > i and segments[k].text.rstrip().endswith("?") and \
                     segments[k - 1].sentence_end and segments[k - 1].end - segments[i].start >= min_d:
                 k -= 1
+            # nor on the interviewer's short segue into the next subject
+            # ("Let us do a quick lightning round."): end on the answer before it
+            if host is not None:
+                t = k
+                while t > i and segments[t].speaker == host and segments[t - 1].speaker == host:
+                    t -= 1
+                tail = segments[t:k + 1]
+                if (t > i and segments[t].speaker == host and segments[t - 1].speaker != host
+                        and segments[k].end - segments[t].start < 6.0
+                        and segments[t - 1].sentence_end and segments[t - 1].end - segments[i].start >= min_d
+                        and all(x.speaker == host for x in tail)):
+                    k = t - 1
             dur = segments[k].end - segments[i].start
             if not (min_d - 0.5 <= dur <= max_d + 0.5) or (i, k) in seen:
                 continue
@@ -70,6 +84,20 @@ def scout_windows(source_id: int, segments: list[Segment], topics: list[dict[str
             out.append(Window(source_id, segments[i].start, segments[k].end, segments[i:k + 1],
                               before=segments[max(0, i - 2):i], after=segments[k + 1:k + 3], topic=topic))
     return out
+
+
+def _questioner(segments: list[Segment]) -> str | None:
+    """The speaker who asks most of the questions (the interviewer), if the
+    source is a conversation with a clear one."""
+    asked: dict[str, int] = {}
+    for sg in segments:
+        if sg.speaker and sg.text.rstrip().endswith("?"):
+            asked[sg.speaker] = asked.get(sg.speaker, 0) + 1
+    speakers = {sg.speaker for sg in segments if sg.speaker}
+    if len(speakers) < 2 or not asked:
+        return None
+    top, n = max(asked.items(), key=lambda kv: kv[1])
+    return top if n >= 3 and n >= 2 * (sum(asked.values()) - n) else None
 
 
 def _iou(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -175,6 +203,13 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
             s.flush()
             out_ids.append(cand.id)
     say(0.85, f"{len(out_ids)} candidates")
+    if get_settings().clip_engine == "openshorts":
+        from . import openshorts
+
+        say(0.86, "asking OpenShorts for its moments")
+        extra = openshorts.run(source_id, campaign if campaign is not None else src.campaign_id,
+                               on_log=lambda m: say(0.86, f"openshorts: {m}"))
+        out_ids += [c.id for c in extra]
     rank(source_id=source_id, progress=lambda f, m: say(0.85 + 0.15 * f, m))
     return [get(i) for i in out_ids]
 

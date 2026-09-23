@@ -114,12 +114,26 @@ def _silhouette(X: np.ndarray, labels: np.ndarray) -> float:
     return float(np.mean(scores))
 
 
-def cluster(X: np.ndarray, max_speakers: int = 6, min_silhouette: float = 0.12) -> tuple[np.ndarray, float]:
+STRONG_SILHOUETTE = 0.25    # a split this clean is real on its own
+WEAK_SILHOUETTE = 0.15      # a weaker split needs a clear jump in the final merge too
+MERGE_JUMP = 1.2
+
+
+def cluster(X: np.ndarray, max_speakers: int = 6) -> tuple[np.ndarray, float]:
+    """Average-linkage clustering of speech-window embeddings; the number of
+    speakers is the k with the best silhouette, but only when the split is real.
+    One voice still splits into "clusters" (intonation, loudness) with a
+    silhouette around 0.15 and no jump in merge height, while distinct voices
+    give about 0.4 and a final merge well above the rest (measured on the
+    benchmark fixtures), so a single speaker is the default."""
     from scipy.cluster.hierarchy import fcluster, linkage
 
     if len(X) < 4:
         return np.zeros(len(X), dtype=int), 1.0
     Z = linkage(X, method="average", metric="cosine")
+    heights = Z[:, 2]
+    jump = float(heights[-1] / heights[-2]) if len(heights) > 1 and heights[-2] > 0 else 1.0
+    min_silhouette = STRONG_SILHOUETTE if jump < MERGE_JUMP else WEAK_SILHOUETTE
     best_k, best_s, best = 1, min_silhouette, np.zeros(len(X), dtype=int)
     for k in range(2, min(max_speakers, len(X) - 1) + 1):
         labels = fcluster(Z, k, criterion="maxclust") - 1
@@ -193,7 +207,7 @@ class PyannoteDiarizer(Diarizer):
         try:
             from pyannote.audio import Pipeline
         except ImportError as e:
-            raise RuntimeError("pyannote.audio is not installed: `uv sync --extra diarization`") from e
+            raise RuntimeError("pyannote.audio is not installed: `uv pip install pyannote.audio`") from e
         wav = get_settings().work_dir / f"diar-{media.stem}.wav"
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(media), "-ac", "1", "-ar", str(SR), str(wav)],
                        check=True)

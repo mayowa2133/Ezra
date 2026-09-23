@@ -53,7 +53,6 @@ class Settings(BaseSettings):
 
     # --- external services (credentials live in env / secret store) -------
     openshorts_url: str = "http://localhost:8001"
-    upload_post_user: str | None = None
 
     # --- worker -------------------------------------------------------------
     worker_poll_seconds: float = 1.0

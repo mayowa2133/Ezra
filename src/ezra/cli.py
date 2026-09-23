@@ -110,8 +110,15 @@ def init() -> None:
 
 @db_app.command("upgrade")
 def db_upgrade() -> None:
+    """Apply migrations up to head (SQLite or PostgreSQL, per EZRA_DATABASE_URL)."""
     db.migrate()
     console.print("migrations applied")
+
+
+@db_app.command("revision")
+def db_revision(message: str = typer.Option(..., "-m", "--message")) -> None:
+    """Autogenerate a migration from model changes (review the file before committing)."""
+    console.print(f"wrote {db.revision(message)}")
 
 
 # --- campaigns -------------------------------------------------------------------------------
@@ -360,12 +367,14 @@ def review_cmd(campaign: str | None = typer.Option(None, "--campaign", "-c"),
 
 @app.command()
 def approve(clip_id: int, notes: str | None = None) -> None:
+    """Approve a rendered clip for publishing (FAIL-compliance clips are refused)."""
     review.approve(clip_id, actor="cli", notes=notes)
     console.print(f"clip {clip_id} approved")
 
 
 @app.command()
 def reject(clip_id: int, reason: str | None = None) -> None:
+    """Reject a clip, with an optional reason kept for learning."""
     review.reject(clip_id, actor="cli", reason=reason)
     console.print(f"clip {clip_id} rejected")
 
@@ -466,6 +475,7 @@ def publish(clip: list[int] | None = typer.Option(None, "--clip"),
 
 @app.command()
 def posts(campaign: str | None = typer.Option(None, "--campaign", "-c"), status: str | None = None) -> None:
+    """Posts with status, visibility, latest views and URL."""
     t = Table("post", "clip", "platform", "provider", "status", "vis", "views", "url")
     for p in publishing.list_posts(campaign, status):
         last = (metrics.history(p.id) or [{}])[-1]
@@ -568,6 +578,7 @@ def report(campaign: str) -> None:
 
 @app.command()
 def earnings(campaign: str) -> None:
+    """Qualified views, estimated and confirmed payout for a campaign (JSON)."""
     console.print_json(json.dumps(economics.earnings(campaign), default=str))
 
 
@@ -586,6 +597,7 @@ def optimize(campaign: str, apply: bool = False) -> None:
 
 @app.command()
 def cost(campaign: str | None = typer.Option(None, "--campaign", "-c")) -> None:
+    """Recorded processing costs (transcription, analysis, render, storage, model calls)."""
     console.print_json(json.dumps(costs.summary(campaigns.get(campaign).id if campaign else None)))
 
 
@@ -717,6 +729,7 @@ def mcp() -> None:
 
 @app.command()
 def audit_log(limit: int = 30) -> None:
+    """Recent audit events: approvals, publishes, rights changes, secret writes."""
     for e in audit.recent(limit):
         console.print(f"{db.aware(e.at):%Y-%m-%d %H:%M} {e.actor:<10} {e.action:<22} {e.entity_type} {e.entity_id}")
 

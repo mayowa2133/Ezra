@@ -15,7 +15,6 @@ from sqlalchemy import select
 
 from .. import costs, db, sources
 from ..db.models import Transcript, TranscriptSegment
-from ..diarization import assign_speakers, get_diarizer
 from .base import Progress, Segment, TranscriptResult, Word, edges, join_words, resegment, snap, window, window_text
 from .providers import get_provider
 
@@ -37,7 +36,7 @@ __all__ = [
 ]
 
 
-SEGMENTER_VERSION = "2"   # bump when resegment()/speaker assignment logic changes
+SEGMENTER_VERSION = "3"   # bump when resegment()/speaker assignment/diarizer clustering changes
 
 
 def _version(provider_version: str, diarizer: str) -> str:
@@ -47,6 +46,8 @@ def _version(provider_version: str, diarizer: str) -> str:
 def ensure_transcript(source_id: int, provider: str | None = None, diarizer: str | None = None,
                       force: bool = False, progress: Progress | None = None) -> Transcript:
     tp = get_provider(provider)
+    from ..diarization import assign_speakers, get_diarizer  # lazy: diarization imports .base
+
     dz = get_diarizer(diarizer)
     version = _version(tp.version(), dz.name)
     with db.session() as s:

@@ -221,3 +221,40 @@ async def _mcp_flow(home: str) -> None:
 
 def test_mcp_workflow_over_stdio(use_processed):
     asyncio.run(_mcp_flow(os.environ["EZRA_HOME"]))
+
+
+def test_openshorts_moments_become_ranked_candidates(use_processed):
+    """EZRA_CLIP_ENGINE=openshorts: moments from a (mocked) OpenShorts backend are snapped,
+    scored and compliance-checked like Ezra's own."""
+    import httpx
+
+    from ezra import openshorts
+
+    calls = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        calls.append((r.method, r.url.path))
+        if r.url.path == "/api/uploads":
+            return httpx.Response(200, json={"upload_id": "u1"})
+        if r.url.path == "/api/uploads/u1":
+            return httpx.Response(200, json={"ok": True})
+        if r.url.path == "/api/process":
+            body = json.loads(r.content)
+            assert body["clip_min_seconds"] == 15 and body["clip_max_seconds"] == 60
+            return httpx.Response(200, json={"job_id": "j1"})
+        if r.url.path == "/api/status/j1":
+            return httpx.Response(200, json={"status": "completed", "logs": ["done"], "result": {"clips": [
+                {"start": 70.2, "end": 90.1, "video_title_for_youtube_short": "He almost quit",
+                 "viral_hook_text": "I almost quit the company"},
+                {"start": 500.0, "end": 520.0}]}})      # past the end: no speech, skipped
+        return httpx.Response(404)
+
+    http = httpx.Client(base_url="http://openshorts", transport=httpx.MockTransport(handler))
+    got = openshorts.run(1, "demo", http=http, poll=0)
+    assert [m for m, _ in calls] == ["POST", "PUT", "POST", "GET"]
+    assert len(got) == 1
+    c = candidates.get(got[0].id)
+    assert c.origin == "openshorts" and c.origin_ref == "j1:0" and c.title == "He almost quit"
+    assert c.compliance_status in ("PASS", "REVIEW_REQUIRED") and c.hook_score is not None
+    words = transcription.load_words(1)
+    assert any(abs(w.s - c.start) < 0.3 for w in words)          # snapped onto a word edge

@@ -94,8 +94,9 @@ def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[di
         r -= 8
         notes.append(f"pace {wpm:.0f} wpm")
     if f["topics_spanned"] > 1:
-        r -= 6 * (f["topics_spanned"] - 1)
-        notes.append("drifts across topics")
+        # one idea per short: each extra subject is a place viewers swipe away
+        r -= 10 * (f["topics_spanned"] - 1)
+        notes.append(f"drifts across {f['topics_spanned']} topics")
     d = f["duration"]
     if d > 50:
         r -= (d - 50) * 0.6
@@ -119,6 +120,9 @@ def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[di
         c -= 8
     if f["first_person_claim"]:
         c += 6
+    if f["topics_spanned"] > 1:
+        c -= 5 * (f["topics_spanned"] - 1)
+        notes.append("mixes separate subjects")
     why["context"] = ", ".join(notes) or "stands alone"
     context = clamp(c)
 
@@ -146,6 +150,10 @@ def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[di
     why["payoff"] = ("ends on an open question (sets up something the clip never answers)" if f.get("ends_on_question")
                      else "ends on a lesson" if f["last_has_lesson"]
                      else "ends mid-sentence" if not f["ends_sentence"] else "plain ending")
+    if f["topics_spanned"] > 1 and p > 50:
+        # the last line lands, but it is the payoff of a different subject than the hook
+        p = 50
+        why["payoff"] += "; the ending belongs to a later subject than the opening"
     payoff = clamp(p)
 
     # visual: faces on screen, some movement, not too many cuts
