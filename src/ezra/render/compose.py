@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -64,7 +65,7 @@ def probe(path: Path) -> dict[str, Any]:
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration",
                           "-of", "json", str(path)], capture_output=True, text=True, check=True)
     d = json.loads(out.stdout)
-    v = next((s for s in d["streams"] if s["codec_type"] == "video"), {})
+    v: dict[str, Any] = next((s for s in d["streams"] if s["codec_type"] == "video"), {})
     return {"duration": float(d["format"]["duration"]), "width": v.get("width"), "height": v.get("height"),
             "has_audio": any(s["codec_type"] == "audio" for s in d["streams"])}
 
@@ -107,7 +108,9 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
     safe = spec.resolved_safe_zone()
     info = probe(src)
     has_audio = info["has_audio"]
-    with tempfile.TemporaryDirectory(prefix="ezra-render-") as tmp:
+    # intermediates live next to the output (same volume: large files stay off /tmp)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".ezra-render-", dir=out.parent) as tmp:
         tdir = Path(tmp)
         # 1. edit decision list -------------------------------------------------------------
         pieces, summary = edl.build(words, start, end, spec.remove_silence, spec.silence_threshold,
@@ -140,7 +143,8 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         inputs: list[str] = list(in_args)
         graph: list[str] = []
         n_in = 1
-        streams = [m for m in ("track", "blur", "split") if m in modes or (m == "track" and modes & {"static", "center"})]
+        streams = [m for m in ("track", "blur", "split")
+                   if m in modes or (m == "track" and modes & {"static", "center"})]
         if not streams:
             streams = ["blur"]
         graph.append(f"[0:v]fps={FPS},setsar=1,split={len(streams)}" + "".join(f"[in_{m}]" for m in streams))
@@ -235,7 +239,8 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             cur = o
 
         # hook card for the first seconds
-        hook = cap.hook_card(spec.hook_text or "", W, spec.caption_font) if spec.hook_overlay and spec.hook_text else None
+        hook = (cap.hook_card(spec.hook_text or "", W, spec.caption_font)
+                if spec.hook_overlay and spec.hook_text else None)
         if hook is not None:
             inputs += ["-i", str(_png(hook, tdir / "hook.png"))]
             o = nxt()
@@ -272,7 +277,10 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         maps = ["-map", "[vout]"]
         if has_audio:
             af = "loudnorm=I=-14:TP=-1.5:LRA=11," if spec.normalize_audio else ""
-            graph.append(f"[0:a]{af}aresample=48000[aout]")
+            # explicit output format: older ffmpeg (Debian 5.1) cannot negotiate a layout for
+            # mono sources whose channel layout is unset
+            graph.append(f"[0:a]{af}aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:"
+                         f"channel_layouts=stereo[aout]")
             maps += ["-map", "[aout]"]
         body = tdir / "body.mp4"
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs, "-filter_complex", ";".join(graph),
@@ -285,10 +293,11 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             writer_error: list[BaseException] = []
             if renderer is not None:
                 assert proc.stdin is not None
+                stdin = proc.stdin
 
                 def feed() -> None:
                     try:
-                        renderer.stream(duration, FPS, proc.stdin.write)  # type: ignore[union-attr]
+                        renderer.stream(duration, FPS, stdin.write)
                     except (BrokenPipeError, ValueError) as e:  # ffmpeg exited early; its log explains why
                         writer_error.append(e)
                     finally:
@@ -310,8 +319,7 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             say(0.85, "adding intro/outro")
             final = _bookend(body, storage_path(spec.intro_key) if spec.intro_key else None,
                              storage_path(spec.outro_key) if spec.outro_key else None, W, H, tdir / "final.mp4")
-        out.parent.mkdir(parents=True, exist_ok=True)
-        final.replace(out)
+        shutil.move(final, out)
         say(0.9, "thumbnail and captions")
         thumb = pick_thumbnail(out, out.with_suffix(".jpg")) if spec.thumbnail else None
         srt = out.with_suffix(".srt")

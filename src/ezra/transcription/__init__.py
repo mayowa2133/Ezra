@@ -16,12 +16,25 @@ from sqlalchemy import select
 from .. import costs, db, sources
 from ..db.models import Transcript, TranscriptSegment
 from ..diarization import assign_speakers, get_diarizer
-from .base import (Progress, Segment, TranscriptResult, Word, edges, join_words, resegment, snap,
-                   window, window_text)
+from .base import Progress, Segment, TranscriptResult, Word, edges, join_words, resegment, snap, window, window_text
 from .providers import get_provider
 
-__all__ = ["ensure_transcript", "latest", "load_words", "load_segments", "Word", "Segment", "snap",
-           "window", "window_text", "join_words", "edges", "page", "fmt_ts", "to_dict"]
+__all__ = [
+    "Segment",
+    "Word",
+    "edges",
+    "ensure_transcript",
+    "fmt_ts",
+    "join_words",
+    "latest",
+    "load_segments",
+    "load_words",
+    "page",
+    "snap",
+    "to_dict",
+    "window",
+    "window_text",
+]
 
 
 SEGMENTER_VERSION = "2"   # bump when resegment()/speaker assignment logic changes

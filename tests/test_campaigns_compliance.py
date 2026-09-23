@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -79,13 +79,13 @@ def test_publish_stage_compliance():
                                             "starts_at: 2026-01-01T00:00:00Z\n  ends_at: 2026-12-31T00:00:00Z\n"
                                             "  posting_limits: {per_day: 2}\n  brief:"))
     c = campaigns.get("demo")
-    when = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    when = datetime(2026, 6, 1, tzinfo=UTC)
     good = compliance.evaluate(c, "publish", copy_text="Wild story #founderstories @podxyz Follow for part 2",
                                platforms=["tiktok"], when=when, posting_counts={"day_total": 0})
     assert good["status"] == "REVIEW_REQUIRED" or good["status"] == "PASS"
     assert not [r for r in good["reasons"] if r["outcome"] == "fail"]
     bad = compliance.evaluate(c, "publish", copy_text="no tags", platforms=["x"],
-                              when=datetime(2027, 1, 5, tzinfo=timezone.utc), posting_counts={"day_total": 2})
+                              when=datetime(2027, 1, 5, tzinfo=UTC), posting_counts={"day_total": 2})
     msgs = " ".join(r["message"] for r in bad["reasons"])
     assert bad["status"] == "FAIL"
     for expected in ("platform not allowed", "missing hashtags", "missing mentions", "after campaign end",
@@ -98,4 +98,5 @@ def test_render_stage_compliance():
     c = campaigns.get("demo")
     r = compliance.evaluate(c, "render", render_spec={"captions": False, "logo_key": None})
     assert r["status"] == "FAIL" and len([x for x in r["reasons"] if x["outcome"] == "fail"]) == 2
-    assert compliance.evaluate(c, "render", render_spec={"captions": True, "logo_key": "brand/x.png"})["status"] == "PASS"
+    spec = {"captions": True, "logo_key": "brand/x.png"}
+    assert compliance.evaluate(c, "render", render_spec=spec)["status"] == "PASS"

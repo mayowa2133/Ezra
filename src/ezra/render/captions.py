@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Callable
+from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -253,7 +254,7 @@ class CaptionRenderer:
                           stroke_fill=stroke)
                 x += wdt + space
 
-    def stream(self, duration: float, fps: int, write: Callable[[bytes], None]) -> int:
+    def stream(self, duration: float, fps: int, write: Callable[[bytes], object]) -> int:
         n = int(round(duration * fps))
         for i in range(n):
             write(self.frame(i / fps))

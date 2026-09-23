@@ -106,4 +106,4 @@ def get_provider(name: str | None = None) -> TranscriptionProvider:
     return PROVIDERS[name]()
 
 
-__all__ = ["FasterWhisperProvider", "WhisperXProvider", "get_provider", "Segment"]
+__all__ = ["FasterWhisperProvider", "Segment", "WhisperXProvider", "get_provider"]

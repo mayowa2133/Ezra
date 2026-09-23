@@ -7,20 +7,19 @@ provenance, never as a single opaque number."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
-from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text,
-                        UniqueConstraint)
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
-    type_annotation_map = {dict[str, Any]: JSON, list[Any]: JSON}
+    type_annotation_map: ClassVar[dict[Any, Any]] = {dict[str, Any]: JSON, list[Any]: JSON}
 
 
 class Timestamped:
@@ -78,7 +77,8 @@ class Campaign(Timestamped, Base):
     forbidden_topics: Mapped[list[Any]] = mapped_column(JSON, default=list)
     competitors: Mapped[list[Any]] = mapped_column(JSON, default=list)
     geography: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    posting_limits: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {"per_day": 3, "per_platform_per_day": {...}}
+    # {"per_day": 3, "per_platform_per_day": {...}}
+    posting_limits: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     human_approval_required: Mapped[bool] = mapped_column(Boolean, default=True)
     extra_rules: Mapped[list[Any]] = mapped_column(JSON, default=list)          # free-form rule strings
     raw_instructions: Mapped[str | None] = mapped_column(Text)                  # as supplied (YAML/JSON/text)

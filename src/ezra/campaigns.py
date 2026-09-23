@@ -159,8 +159,13 @@ def parse(text: str, fmt: str | None = None) -> list[CampaignSpec]:
     if fmt == "csv":
         return [parse_csv_row(row) for row in csv.DictReader(io.StringIO(text))]
     data = json.loads(text) if fmt == "json" else yaml.safe_load(text)
-    items = data if isinstance(data, list) else (data.get("campaigns") if isinstance(data, dict) and
-                                                 isinstance(data.get("campaigns"), list) else [data])
+    items: list[Any]
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict) and isinstance(data.get("campaigns"), list):
+        items = data["campaigns"]
+    else:
+        items = [data]
     return [CampaignSpec.model_validate(_flatten(item)) for item in items]
 
 

@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..analysis.text import LEXICON, NUMBER, emotion_signals, tokens
+from ..analysis.text import NUMBER, emotion_signals, tokens
 from ..transcription.base import Segment, Word, ends_sentence, join_words
 
 CONNECTOR_START = {"so", "and", "but", "or", "because", "anyway", "also", "then", "plus", "which", "like"}
@@ -73,7 +73,8 @@ def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
     toks = tokens(text)
     import math
 
-    rarity = (sum(math.log(1 + n_docs / (1 + corpus_df.get(t, 0))) for t in set(toks)) / len(set(toks))) if toks else 0.0
+    uniq = set(toks)
+    rarity = sum(math.log(1 + n_docs / (1 + corpus_df.get(t, 0))) for t in uniq) / len(uniq) if uniq else 0.0
     sec = [a for i, a in enumerate(activity) if win.start <= i < win.end]
     faces_in = [f for t, f in (face_timeline or []) if win.start <= t < win.end]
     cuts = sum(1 for sc in scenes if win.start < sc["start"] < win.end)

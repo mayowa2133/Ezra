@@ -32,7 +32,8 @@ def tick() -> dict[str, Any]:
                 p.status = "publishing"
         queued.append(pid)
     with db.session() as s:
-        processing = s.scalar(select(Post.id).where(Post.status == "publishing", Post.external_id.is_not(None)).limit(1))
+        processing = s.scalar(select(Post.id).where(Post.status == "publishing",
+                                                    Post.external_id.is_not(None)).limit(1))
         last_sync = s.scalar(select(Job).where(Job.kind == "sync_metrics").order_by(Job.id.desc()).limit(1))
         published = s.scalar(select(Post.id).where(Post.status == "published").limit(1))
     if processing is not None:

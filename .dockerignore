@@ -1,0 +1,15 @@
+.git
+.venv
+data
+footage
+output
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+apps/web/node_modules
+apps/web/.next
+*.mp4
+*.mov
+*.mkv
+.env

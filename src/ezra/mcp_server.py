@@ -18,8 +18,23 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from pydantic import BaseModel, Field
 
-from . import (analysis, campaigns, candidates, db, economics, jobs, metadata, metrics, publishing, render, review,
-               runner, security, sources, transcription)
+from . import (
+    analysis,
+    campaigns,
+    candidates,
+    db,
+    economics,
+    jobs,
+    metadata,
+    metrics,
+    publishing,
+    render,
+    review,
+    runner,
+    security,
+    sources,
+    transcription,
+)
 from . import analytics as perf
 
 INSTRUCTIONS = """Ezra finds, ranks, renders and publishes short-form clips for performance-paid campaigns,
@@ -247,13 +262,17 @@ def ezra_schedule_clip(clip_id: int, schedule_at: str, timezone: str = "UTC", pl
                                    confirm=confirm, actor="mcp")
 
 
+def _latest(history: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return history[-1] if history else None
+
+
 @server.tool()
 def ezra_list_posts(campaign: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
     """Posts with status, URL and latest metrics."""
     out = []
     for p in publishing.list_posts(campaign, status):
         d = publishing.post_dict(p)
-        d["latest_metrics"] = (metrics.history(p.id) or [None])[-1]
+        d["latest_metrics"] = _latest(metrics.history(p.id))
         out.append(d)
     return out
 

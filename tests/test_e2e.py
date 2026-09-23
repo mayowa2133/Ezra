@@ -12,10 +12,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-from ezra import (analysis, candidates, economics, jobs, metadata, metrics, publishing, render, review,
-                  transcription, worker)
+from ezra import (
+    analysis,
+    candidates,
+    economics,
+    jobs,
+    metadata,
+    metrics,
+    publishing,
+    render,
+    review,
+    transcription,
+    worker,
+)
 from ezra import analytics as perf
 from tests.conftest import needs_tts
 
@@ -179,36 +188,35 @@ async def _mcp_flow(home: str) -> None:
         sc = res.structured_content
         return sc.get("result", sc) if isinstance(sc, dict) and set(sc) == {"result"} else sc
 
-    async with stdio_client(params) as (r, w):
-        async with ClientSession(r, w) as s:
-            await s.initialize()
-            names = {t.name for t in (await s.list_tools()).tools}
-            required = {"ezra_create_campaign", "ezra_get_campaign", "ezra_list_campaigns", "ezra_add_source",
-                        "ezra_analyze_source", "ezra_find_candidates", "ezra_list_candidates", "ezra_rank_candidates",
-                        "ezra_render_candidate", "ezra_render_top", "ezra_list_clips", "ezra_approve_clip",
-                        "ezra_reject_clip", "ezra_update_clip", "ezra_generate_metadata", "ezra_publish_clip",
-                        "ezra_schedule_clip", "ezra_list_posts", "ezra_sync_metrics", "ezra_campaign_report",
-                        "ezra_earnings_report", "ezra_optimize_campaign", "ezra_run_campaign"}
-            assert required <= names, required - names
-            call = lambda n, **kw: s.call_tool(n, kw)  # noqa: E731
-            cands = data(await call("ezra_list_candidates", campaign="demo", top=3))
-            seg = data(await call("ezra_get_transcript", source_id=1, max_chars=500))
-            assert seg["next_start"] is not None
-            scored = data(await call("ezra_score_candidate", candidate_id=cands[1]["id"], scores={
-                "hook": 95, "retention": 90, "context": 90, "emotion": 88, "novelty": 80, "discussion": 85,
-                "payoff": 90, "visual": 70, "campaign_fit": 92}, notes="agent judgement"))
-            assert scored["scorer"] == "agent+heuristic" and scored["rank_score"] > 80
-            job = data(await call("ezra_render_candidate", candidate_id=cands[1]["id"]))
-            for _ in range(240):
-                st = data(await call("ezra_job_status", job_id=job["id"]))
-                if st["status"] in ("completed", "failed"):
-                    break
-                await asyncio.sleep(0.5)
-            assert st["status"] == "completed", st
-            clip_id = st["result"]["clip_id"]
-            data(await call("ezra_approve_clip", clip_id=clip_id))
-            dry = data(await call("ezra_publish_clip", clip_id=clip_id, platforms=["tiktok"]))
-            assert dry["problems"] and "no tiktok account" in dry["problems"][0]
+    async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
+        await s.initialize()
+        names = {t.name for t in (await s.list_tools()).tools}
+        required = {"ezra_create_campaign", "ezra_get_campaign", "ezra_list_campaigns", "ezra_add_source",
+                    "ezra_analyze_source", "ezra_find_candidates", "ezra_list_candidates", "ezra_rank_candidates",
+                    "ezra_render_candidate", "ezra_render_top", "ezra_list_clips", "ezra_approve_clip",
+                    "ezra_reject_clip", "ezra_update_clip", "ezra_generate_metadata", "ezra_publish_clip",
+                    "ezra_schedule_clip", "ezra_list_posts", "ezra_sync_metrics", "ezra_campaign_report",
+                    "ezra_earnings_report", "ezra_optimize_campaign", "ezra_run_campaign"}
+        assert required <= names, required - names
+        call = lambda n, **kw: s.call_tool(n, kw)
+        cands = data(await call("ezra_list_candidates", campaign="demo", top=3))
+        seg = data(await call("ezra_get_transcript", source_id=1, max_chars=500))
+        assert seg["next_start"] is not None
+        scored = data(await call("ezra_score_candidate", candidate_id=cands[1]["id"], scores={
+            "hook": 95, "retention": 90, "context": 90, "emotion": 88, "novelty": 80, "discussion": 85,
+            "payoff": 90, "visual": 70, "campaign_fit": 92}, notes="agent judgement"))
+        assert scored["scorer"] == "agent+heuristic" and scored["rank_score"] > 80
+        job = data(await call("ezra_render_candidate", candidate_id=cands[1]["id"]))
+        for _ in range(240):
+            st = data(await call("ezra_job_status", job_id=job["id"]))
+            if st["status"] in ("completed", "failed"):
+                break
+            await asyncio.sleep(0.5)
+        assert st["status"] == "completed", st
+        clip_id = st["result"]["clip_id"]
+        data(await call("ezra_approve_clip", clip_id=clip_id))
+        dry = data(await call("ezra_publish_clip", clip_id=clip_id, platforms=["tiktok"]))
+        assert dry["problems"] and "no tiktok account" in dry["problems"][0]
 
 
 def test_mcp_workflow_over_stdio(use_processed):

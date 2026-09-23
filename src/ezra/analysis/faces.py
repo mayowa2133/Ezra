@@ -50,9 +50,10 @@ class HaarDetector(FaceDetector):
         import cv2
 
         self.cv2 = cv2
-        self.frontal = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        self.profile = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
-        self.eye = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
+        root = cv2.data.haarcascades  # type: ignore[attr-defined]
+        self.frontal = cv2.CascadeClassifier(root + "haarcascade_frontalface_default.xml")
+        self.profile = cv2.CascadeClassifier(root + "haarcascade_profileface.xml")
+        self.eye = cv2.CascadeClassifier(root + "haarcascade_eye.xml")
 
     def _has_eye(self, gray: np.ndarray, box: tuple[int, int, int, int]) -> bool:
         """Frontal Haar fires on textured non-faces (clothing, patterns); a real
@@ -69,7 +70,7 @@ class HaarDetector(FaceDetector):
     def detect(self, gray: np.ndarray, rgb: np.ndarray | None = None) -> list[Face]:
         h, w = gray.shape
         loose = list(self.frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(24, 24)))
-        found = [b for b in loose if self._has_eye(gray, tuple(b))]
+        found = [b for b in loose if self._has_eye(gray, (int(b[0]), int(b[1]), int(b[2]), int(b[3])))]
         if not found and loose:  # eyes can be missed (glasses, tiny faces): demand stronger evidence instead
             found = list(self.frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=10, minSize=(24, 24)))
         if not found:  # speakers turn sideways toward their guest
@@ -97,7 +98,7 @@ class MediaPipeDetector(FaceDetector):
         if not model.exists():
             model.parent.mkdir(parents=True, exist_ok=True)
             tmp = model.with_suffix(".part")
-            urllib.request.urlretrieve(self.MODEL_URL, tmp)  # noqa: S310 (fixed official https URL)
+            urllib.request.urlretrieve(self.MODEL_URL, tmp)
             tmp.replace(model)
         self.mp = mp
         self.detector = vision.FaceDetector.create_from_options(vision.FaceDetectorOptions(

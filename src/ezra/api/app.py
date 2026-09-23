@@ -26,14 +26,35 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import (analysis, audit, brandkits, campaigns, candidates, costs, db, economics, experiments, jobs,
-                metadata, metrics, publishing, render, review, runner, secrets, security, sources, transcription)
+from .. import (
+    analysis,
+    audit,
+    brandkits,
+    campaigns,
+    candidates,
+    costs,
+    db,
+    economics,
+    experiments,
+    jobs,
+    metadata,
+    metrics,
+    publishing,
+    render,
+    review,
+    runner,
+    secrets,
+    security,
+    sources,
+    transcription,
+)
 from .. import analytics as perf
 from ..config import get_settings
 from ..storage import StorageError, get_storage
 
+
 @asynccontextmanager
-async def lifespan(_: FastAPI):  # type: ignore[no-untyped-def]
+async def lifespan(_: FastAPI):
     db.migrate()
     if os.environ.get("EZRA_EMBEDDED_WORKER") == "1":
         start_embedded_worker()
@@ -48,7 +69,7 @@ _limiter: security.RateLimiter | None = None
 # --- middleware ---------------------------------------------------------------------------
 
 @app.middleware("http")
-async def guard(request: Request, call_next):  # type: ignore[no-untyped-def]
+async def guard(request: Request, call_next):
     global _limiter
     s = get_settings()
     if _limiter is None:
@@ -151,7 +172,7 @@ def _ranged(path: Path, request: Request) -> Response:
     if start > end or start >= size:
         raise HTTPException(416, "range not satisfiable")
 
-    def body():  # type: ignore[no-untyped-def]
+    def body():
         with open(path, "rb") as fh:
             fh.seek(start)
             left = end - start + 1
@@ -291,7 +312,7 @@ def list_sources(campaign: str | None = None) -> list[dict[str, Any]]:
 
 
 @app.post("/api/sources", dependencies=[Auth], status_code=201)
-async def upload_source(file: UploadFile = File(...), campaign: str | None = Form(None),
+def upload_source(file: UploadFile = File(...), campaign: str | None = Form(None),
                         rights_basis: str = Form("unknown"), title: str | None = Form(None)) -> dict[str, Any]:
     name = Path(file.filename or "upload.mp4").name
     if Path(name).suffix.lower() not in security.VIDEO_EXTENSIONS | security.AUDIO_EXTENSIONS:
@@ -302,7 +323,7 @@ async def upload_source(file: UploadFile = File(...), campaign: str | None = For
     written = 0
     try:
         with open(dest, "wb") as out:
-            while chunk := await file.read(1 << 20):
+            while chunk := file.file.read(1 << 20):
                 written += len(chunk)
                 if written > limit:
                     raise HTTPException(413, f"file exceeds {get_settings().max_upload_mb} MB")
@@ -573,12 +594,16 @@ def publish(clip_id: int, body: PublishBody) -> dict[str, Any]:
                                    variant=body.variant)
 
 
+def _latest(history: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return history[-1] if history else None
+
+
 @app.get("/api/posts", dependencies=[Auth])
 def list_posts(campaign: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
     out = []
     for p in publishing.list_posts(campaign, status):
         d = publishing.post_dict(p)
-        d["metrics"] = (metrics.history(p.id) or [None])[-1]
+        d["metrics"] = _latest(metrics.history(p.id))
         out.append(d)
     return out
 
@@ -730,7 +755,8 @@ def create_kit(spec: brandkits.BrandKitSpec) -> dict[str, Any]:
 
 
 @app.get("/api/jobs", dependencies=[Auth])
-def list_jobs(status: str | None = None, kind: str | None = None, limit: int = Query(50, le=500)) -> list[dict[str, Any]]:
+def list_jobs(status: str | None = None, kind: str | None = None,
+              limit: int = Query(50, le=500)) -> list[dict[str, Any]]:
     return [jobs.as_dict(j) for j in jobs.list_jobs(status, kind, limit)]
 
 

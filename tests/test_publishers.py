@@ -5,6 +5,7 @@ of each official API; live posting needs real OAuth apps (REMAINING_EXTERNAL_SET
 import json
 import re
 import time
+from datetime import UTC
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -12,9 +13,9 @@ import httpx
 import pytest
 
 from ezra import secrets
+from ezra.jobs import RetryableError
 from ezra.publishing import providers
 from ezra.publishing.base import PostRequest, PublishError, pkce_pair
-from ezra.jobs import RetryableError
 
 
 @pytest.fixture
@@ -86,9 +87,9 @@ def test_youtube_oauth_upload_schedule_and_metrics(video):
     assert tok["account"] == "My Channel" and tok["expires_at"] > time.time()
     secrets.put("youtube:My Channel", tok)
     acc = {"handle": "My Channel", "credential_ref": "youtube:My Channel", "meta": {}}
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    when = datetime.now(timezone.utc) + timedelta(days=1)
+    when = datetime.now(UTC) + timedelta(days=1)
     res = yt.publish(acc, req(video, scheduled_at=when), "youtube")
     assert res.status == "scheduled" and res.url == "https://www.youtube.com/shorts/yt123"
     assert uploaded["meta"]["status"]["privacyStatus"] == "private" and "publishAt" in uploaded["meta"]["status"]
@@ -221,12 +222,18 @@ def test_tiktok_multi_chunk_ranges(tmp_path):
 
     def init(r):
         init_body.update(json.loads(r.content)["source_info"])
-        return httpx.Response(200, json={"data": {"publish_id": "p", "upload_url": "https://u/1"}, "error": {"code": "ok"}})
+        return httpx.Response(200, json={"data": {"publish_id": "p", "upload_url": "https://u/1"},
+                                         "error": {"code": "ok"}})
 
-    rec = Recorder({("POST", r"init"): init,
-                    ("PUT", r"https://u/1"): lambda r: (ranges.append(r.headers["Content-Range"]), httpx.Response(201))[1],
-                    ("POST", r"status/fetch"): lambda r: httpx.Response(200, json={"data": {"status": "PROCESSING_UPLOAD"}})})
-    res = providers.TikTokPublisher(rec.client()).publish({"credential_ref": "tiktok:me", "meta": {}}, req(big), "tiktok")
+    def chunk(r):
+        ranges.append(r.headers["Content-Range"])
+        return httpx.Response(201)
+
+    rec = Recorder({("POST", r"init"): init, ("PUT", r"https://u/1"): chunk,
+                    ("POST", r"status/fetch"): lambda r: httpx.Response(
+                        200, json={"data": {"status": "PROCESSING_UPLOAD"}})})
+    acc = {"credential_ref": "tiktok:me", "meta": {}}
+    res = providers.TikTokPublisher(rec.client()).publish(acc, req(big), "tiktok")
     size = big.stat().st_size
     c = 10 * 1024 * 1024
     assert init_body["total_chunk_count"] == 2 and init_body["chunk_size"] == c

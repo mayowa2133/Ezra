@@ -127,6 +127,8 @@ class Publisher(ABC):
     def client_credentials(self) -> dict[str, Any]:
         assert self.client_secret_ref
         cred = secrets.require(self.client_secret_ref, f"{self.name} OAuth app credentials")
+        if isinstance(cred, dict) and len(cred) == 1 and set(cred) <= {"web", "installed"}:
+            cred = next(iter(cred.values()))   # Google's downloaded client_secret.json
         if not isinstance(cred, dict) or not cred.get("client_id") or not cred.get("client_secret"):
             raise PublishError(f"secret {self.client_secret_ref!r} must be JSON with client_id and client_secret")
         return cred

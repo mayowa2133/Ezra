@@ -17,7 +17,7 @@ def _seed_posts(views: list[int], features: list[dict] | None = None, variant: l
                      duration=100)
         s.add(src)
         s.flush()
-        for i, v in enumerate(views):
+        for i, _ in enumerate(views):
             cand = Candidate(campaign_id=camp.id, source_id=src.id, start=0, end=30, rank_score=40 + i)
             s.add(cand)
             s.flush()

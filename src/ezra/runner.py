@@ -23,7 +23,7 @@ Progress = Callable[[float, str], None]
 
 def run_campaign(campaign: str | int, render_top: int = 5, max_candidates: int = 40, autonomous: bool = False,
                  spec: dict[str, Any] | None = None, progress: Progress | None = None) -> dict[str, Any]:
-    say = progress or (lambda f, m: None)
+    say: Progress = progress or (lambda f, m: None)
     camp = campaigns.get(campaign)
     srcs = sources.list_sources(camp.slug)
     if not srcs:
@@ -31,11 +31,16 @@ def run_campaign(campaign: str | int, render_top: int = 5, max_candidates: int =
     n = len(srcs)
     for i, src in enumerate(srcs):
         base = i / n * 0.7
+        def analyzing(f: float, m: str, b: float = base, sid: int = src.id) -> None:
+            say(b + f * 0.5 / n, f"source {sid}: {m}")
+
+        def finding(f: float, m: str, b: float = base) -> None:
+            say(b + (0.5 + f * 0.5) / n, m)
+
         if src.status != "analyzed":
-            analysis.analyze_source(src.id, progress=lambda f, m, b=base: say(b + f * 0.5 / n, f"source {src.id}: {m}"))
+            analysis.analyze_source(src.id, progress=analyzing)
         if not candidates.list_candidates(camp.slug, src.id):
-            candidates.find_candidates(src.id, camp.slug, max_candidates,
-                                       progress=lambda f, m, b=base: say(b + (0.5 + f * 0.5) / n, m))
+            candidates.find_candidates(src.id, camp.slug, max_candidates, progress=finding)
     say(0.72, "rendering the strongest candidates")
     clips = render.render_top(camp.slug, top=render_top, spec=spec,
                               progress=lambda f, m: say(0.72 + 0.23 * f, m))

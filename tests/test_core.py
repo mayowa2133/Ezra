@@ -22,7 +22,7 @@ def test_job_lifecycle_progress_and_logs():
     assert job.status == "queued"
     done = worker.run_one()
     assert done.status == "completed" and done.result == {"ok": True, "echo": "hi"} and done.progress == 1.0
-    messages = [l.message for l in jobs.logs(job.id)]
+    messages = [x.message for x in jobs.logs(job.id)]
     assert messages[0] == "queued noop" and messages[-1] == "completed"
 
 

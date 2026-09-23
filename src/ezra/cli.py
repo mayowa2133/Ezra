@@ -11,16 +11,34 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import typer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from . import (analysis, audit, brandkits, campaigns, candidates, costs, db, economics, experiments, jobs,
-               metadata, metrics, publishing, render, review, runner, secrets, sources, transcription)
 from . import analytics as perf
+from . import (
+    audit,
+    brandkits,
+    campaigns,
+    candidates,
+    costs,
+    db,
+    economics,
+    experiments,
+    jobs,
+    metadata,
+    metrics,
+    publishing,
+    render,
+    review,
+    runner,
+    secrets,
+    sources,
+    transcription,
+)
 from .config import get_settings
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False,
@@ -99,7 +117,8 @@ def db_upgrade() -> None:
 # --- campaigns -------------------------------------------------------------------------------
 
 @campaign_app.command("import")
-def campaign_import(path: Path, no_sources: bool = typer.Option(False, help="Don't ingest listed source files")) -> None:
+def campaign_import(path: Path,
+                    no_sources: bool = typer.Option(False, help="Don't ingest listed source files")) -> None:
     """Import campaigns from YAML, JSON or CSV."""
     for c in campaigns.import_file(path, ingest_sources=not no_sources):
         console.print(f"campaign [bold]{c.slug}[/] ({c.name}): CPM {c.currency} {c.cpm:.2f}, "
@@ -111,7 +130,7 @@ def campaign_import(path: Path, no_sources: bool = typer.Option(False, help="Don
 @campaign_app.command("create")
 def campaign_create(name: str = typer.Option(..., prompt=True), cpm: float = typer.Option(..., prompt="CPM ($)"),
                     min_views: int = typer.Option(0, prompt="Minimum qualified views"),
-                    max_payout: Optional[float] = typer.Option(None, help="Max payout per clip"),
+                    max_payout: float | None = typer.Option(None, help="Max payout per clip"),
                     hashtags: str = typer.Option("", prompt="Required hashtags (space separated)"),
                     platforms: str = typer.Option("tiktok,instagram,youtube", prompt="Platforms"),
                     min_duration: float = 15, max_duration: float = 60, brief: str = "") -> None:
@@ -141,16 +160,18 @@ def campaign_show(ref: str) -> None:
 # --- sources & analysis ------------------------------------------------------------------------
 
 @source_app.command("add")
-def source_add(path: str, campaign: Optional[str] = typer.Option(None, "--campaign", "-c"),
-               rights: str = typer.Option("unknown", help="campaign_supplied | owned | licensed | permission | unknown"),
-               title: Optional[str] = None) -> None:
+def source_add(path: str, campaign: str | None = typer.Option(None, "--campaign", "-c"),
+               rights: str = typer.Option("unknown",
+                                          help="campaign_supplied | owned | licensed | permission | unknown"),
+               title: str | None = None) -> None:
     """Ingest a local file (or URL with yt-dlp) you are authorized to use."""
     s = sources.ingest(path, campaign, title, rights, actor="cli")
-    console.print(f"source {s.id}: {s.title} ({s.duration / 60:.1f} min, {s.width}x{s.height}) rights {s.rights_status}")
+    console.print(f"source {s.id}: {s.title} ({s.duration / 60:.1f} min, {s.width}x{s.height}) "
+                  f"rights {s.rights_status}")
 
 
 @source_app.command("list")
-def source_list(campaign: Optional[str] = typer.Option(None, "--campaign", "-c")) -> None:
+def source_list(campaign: str | None = typer.Option(None, "--campaign", "-c")) -> None:
     t = Table("id", "title", "min", "status", "rights", "candidates")
     for s in sources.list_sources(campaign):
         d = sources.to_dict(s)
@@ -159,7 +180,7 @@ def source_list(campaign: Optional[str] = typer.Option(None, "--campaign", "-c")
 
 
 @source_app.command("rights")
-def source_rights(source_id: int, status: str, basis: Optional[str] = None, notes: Optional[str] = None) -> None:
+def source_rights(source_id: int, status: str, basis: str | None = None, notes: str | None = None) -> None:
     s = sources.set_rights(source_id, status, basis, notes, actor="cli")
     console.print(f"source {s.id} rights: {s.rights_status} ({s.rights_basis})")
 
@@ -174,8 +195,8 @@ def _sources_for(source_id: int | None, campaign: str | None) -> list[int]:
 
 
 @app.command()
-def analyze(source_id: Optional[int] = typer.Option(None, "--source", "-s"),
-            campaign: Optional[str] = typer.Option(None, "--campaign", "-c"), force: bool = False,
+def analyze(source_id: int | None = typer.Option(None, "--source", "-s"),
+            campaign: str | None = typer.Option(None, "--campaign", "-c"), force: bool = False,
             queue: bool = False) -> None:
     """Transcribe, diarize and analyze scenes, faces, silence and topics."""
     for sid in _sources_for(source_id, campaign):
@@ -198,8 +219,8 @@ def transcript(source_id: int, start: float = 0.0) -> None:
 # --- candidates & ranking ----------------------------------------------------------------------
 
 @app.command("find")
-def find(source_id: Optional[int] = typer.Option(None, "--source", "-s"),
-         campaign: Optional[str] = typer.Option(None, "--campaign", "-c"), max_candidates: int = 40,
+def find(source_id: int | None = typer.Option(None, "--source", "-s"),
+         campaign: str | None = typer.Option(None, "--campaign", "-c"), max_candidates: int = 40,
          queue: bool = False) -> None:
     """Generate and rank candidate moments."""
     for sid in _sources_for(source_id, campaign):
@@ -210,8 +231,8 @@ def find(source_id: Optional[int] = typer.Option(None, "--source", "-s"),
 
 
 @app.command("candidates")
-def candidates_cmd(campaign: Optional[str] = typer.Option(None, "--campaign", "-c"),
-                   source_id: Optional[int] = typer.Option(None, "--source", "-s"), top: int = 20,
+def candidates_cmd(campaign: str | None = typer.Option(None, "--campaign", "-c"),
+                   source_id: int | None = typer.Option(None, "--source", "-s"), top: int = 20,
                    all: bool = typer.Option(False, "--all", help="Include compliance failures")) -> None:
     """Ranked candidates (generated on first use; `ezra find` to regenerate)."""
     items = candidates.list_candidates(campaign, source_id, top, include_failed=all)
@@ -241,7 +262,7 @@ def candidate(candidate_id: int) -> None:
 
 
 @app.command()
-def rank(campaign: Optional[str] = typer.Option(None, "--campaign", "-c"), no_model: bool = False,
+def rank(campaign: str | None = typer.Option(None, "--campaign", "-c"), no_model: bool = False,
          queue: bool = False) -> None:
     """Re-rank candidates (model critique when EZRA_LLM is configured)."""
     out = run_job("rank_candidates", {"campaign": campaign, "use_model": not no_model}, queue, "rank")
@@ -271,30 +292,33 @@ def _spec(aspect: str | None, theme: str | None, layout: str | None, punch_in: s
 
 @app.command("render")
 def render_cmd(top: int = typer.Option(5, help="Render the N best unrendered candidates"),
-               candidate_id: Optional[int] = typer.Option(None, "--candidate"),
-               campaign: Optional[str] = typer.Option(None, "--campaign", "-c"),
-               aspect: Optional[str] = None, theme: Optional[str] = None, layout: Optional[str] = None,
-               punch_in: Optional[str] = None, no_silence_removal: bool = False, no_filler_removal: bool = False,
+               candidate_id: int | None = typer.Option(None, "--candidate"),
+               campaign: str | None = typer.Option(None, "--campaign", "-c"),
+               aspect: str | None = None, theme: str | None = None, layout: str | None = None,
+               punch_in: str | None = None, no_silence_removal: bool = False, no_filler_removal: bool = False,
                queue: bool = False) -> None:
     """Render clips (9:16 by default) with tracking, captions and edits."""
     spec = _spec(aspect, theme, layout, punch_in, no_silence_removal, no_filler_removal) or None
     if candidate_id:
         out = run_job("render_candidate", {"candidate_id": candidate_id, "spec": spec}, queue, f"render {candidate_id}")
-        ids = [out.get("clip_id")] if not queue else []
+        ids = [out["clip_id"]] if not queue and out.get("clip_id") else []
     else:
         out = run_job("render_top", {"campaign": campaign, "top": top, "spec": spec}, queue, f"render top {top}")
         ids = out.get("clips", []) if not queue else []
     for cid in ids:
-        c = render.get_clip(cid)
+        c = render.get_clip(int(cid))
         v = render.current_version(c)
-        console.print(f"clip {cid}: {v.duration:.1f}s {v.width}x{v.height} layout {v.layout_used}  "  # type: ignore[union-attr]
-                      f"[dim]{get_settings().storage_dir / v.video_key}[/]")  # type: ignore[union-attr]
+        if v is None:
+            continue
+        key = v.video_key or ""
+        where = get_settings().storage_dir / key if get_settings().storage == "local" else key
+        console.print(f"clip {cid}: {v.duration:.1f}s {v.width}x{v.height} layout {v.layout_used}  [dim]{where}[/]")
 
 
 # --- review ---------------------------------------------------------------------------------------
 
 @app.command("review")
-def review_cmd(campaign: Optional[str] = typer.Option(None, "--campaign", "-c"),
+def review_cmd(campaign: str | None = typer.Option(None, "--campaign", "-c"),
                open_video: bool = typer.Option(False, "--open", help="Open each clip in the default player")) -> None:
     """Keyboard review: a = approve, r = reject, s = skip, q = quit."""
     queue_ = review.queue(campaign)
@@ -318,7 +342,7 @@ def review_cmd(campaign: Optional[str] = typer.Option(None, "--campaign", "-c"),
         if path:
             console.print(f"video: {path}")
             if open_video:
-                os.system(f"open '{path}' 2>/dev/null || xdg-open '{path}' 2>/dev/null")  # noqa: S605
+                os.system(f"open '{path}' 2>/dev/null || xdg-open '{path}' 2>/dev/null")
         while True:
             key = console.input("a=approve r=reject s=skip q=quit > ").strip().lower()
             if key in ("a", "r", "s", "q"):
@@ -335,19 +359,19 @@ def review_cmd(campaign: Optional[str] = typer.Option(None, "--campaign", "-c"),
 
 
 @app.command()
-def approve(clip_id: int, notes: Optional[str] = None) -> None:
+def approve(clip_id: int, notes: str | None = None) -> None:
     review.approve(clip_id, actor="cli", notes=notes)
     console.print(f"clip {clip_id} approved")
 
 
 @app.command()
-def reject(clip_id: int, reason: Optional[str] = None) -> None:
+def reject(clip_id: int, reason: str | None = None) -> None:
     review.reject(clip_id, actor="cli", reason=reason)
     console.print(f"clip {clip_id} rejected")
 
 
 @clip_app.command("list")
-def clip_list(campaign: Optional[str] = typer.Option(None, "--campaign", "-c"), status: Optional[str] = None) -> None:
+def clip_list(campaign: str | None = typer.Option(None, "--campaign", "-c"), status: str | None = None) -> None:
     t = Table("id", "status", "v", "dur", "layout", "title")
     for c in render.list_clips(campaign, status):
         v = render.current_version(c)
@@ -362,7 +386,7 @@ def clip_show(clip_id: int) -> None:
 
 
 @clip_app.command("metadata")
-def clip_metadata(clip_id: int, platforms: Optional[str] = None, no_model: bool = False) -> None:
+def clip_metadata(clip_id: int, platforms: str | None = None, no_model: bool = False) -> None:
     """Generate per-platform titles, captions and hashtags."""
     out = metadata.generate(clip_id, platforms.split(",") if platforms else None, use_model=not no_model)
     for p, m in out["metadata"].items():
@@ -370,8 +394,8 @@ def clip_metadata(clip_id: int, platforms: Optional[str] = None, no_model: bool 
 
 
 @clip_app.command("rerender")
-def clip_rerender(clip_id: int, aspect: Optional[str] = None, theme: Optional[str] = None,
-                  layout: Optional[str] = None, punch_in: Optional[str] = None, queue: bool = False) -> None:
+def clip_rerender(clip_id: int, aspect: str | None = None, theme: str | None = None,
+                  layout: str | None = None, punch_in: str | None = None, queue: bool = False) -> None:
     run_job("rerender_clip", {"clip_id": clip_id, "changes": _spec(aspect, theme, layout, punch_in, False, False)},
             queue, f"rerender {clip_id}")
     console.print(f"clip {clip_id} re-rendered")
@@ -402,11 +426,11 @@ def clip_export(clip_id: int, dest: Path = typer.Option(Path("exports"))) -> Non
 # --- publishing ----------------------------------------------------------------------------------
 
 @app.command()
-def publish(clip: Optional[list[int]] = typer.Option(None, "--clip"),
-            campaign: Optional[str] = typer.Option(None, "--campaign", "-c"),
-            platforms: Optional[str] = None, private: bool = False,
-            schedule: Optional[str] = typer.Option(None, help="ISO datetime, e.g. 2026-10-01T18:00"),
-            tz: Optional[str] = typer.Option(None, help="IANA timezone for --schedule"),
+def publish(clip: list[int] | None = typer.Option(None, "--clip"),
+            campaign: str | None = typer.Option(None, "--campaign", "-c"),
+            platforms: str | None = None, private: bool = False,
+            schedule: str | None = typer.Option(None, help="ISO datetime, e.g. 2026-10-01T18:00"),
+            tz: str | None = typer.Option(None, help="IANA timezone for --schedule"),
             yes: bool = False, dry_run: bool = False) -> None:
     """Publish approved clips (asks before posting)."""
     ids = clip or [c.id for c in render.list_clips(campaign, "approved")]
@@ -441,7 +465,7 @@ def publish(clip: Optional[list[int]] = typer.Option(None, "--clip"),
 
 
 @app.command()
-def posts(campaign: Optional[str] = typer.Option(None, "--campaign", "-c"), status: Optional[str] = None) -> None:
+def posts(campaign: str | None = typer.Option(None, "--campaign", "-c"), status: str | None = None) -> None:
     t = Table("post", "clip", "platform", "provider", "status", "vis", "views", "url")
     for p in publishing.list_posts(campaign, status):
         last = (metrics.history(p.id) or [{}])[-1]
@@ -460,8 +484,8 @@ def accounts_list() -> None:
 
 
 @accounts_app.command("add")
-def accounts_add(platform: str, provider: str, handle: str, credential_ref: Optional[str] = None,
-                 tz: str = "UTC", export_dir: Optional[Path] = None) -> None:
+def accounts_add(platform: str, provider: str, handle: str, credential_ref: str | None = None,
+                 tz: str = "UTC", export_dir: Path | None = None) -> None:
     """Register an account (local-export needs no credential; upload-post uses UPLOAD_POST_API_KEY)."""
     meta = {"dir": str(export_dir.resolve())} if export_dir else {}
     a = publishing.add_account(platform, provider, handle, credential_ref, tz, meta)
@@ -496,7 +520,7 @@ def secrets_list() -> None:
 # --- metrics, earnings, analytics --------------------------------------------------------------------
 
 @metrics_app.command("sync")
-def metrics_sync(campaign: Optional[str] = typer.Option(None, "--campaign", "-c")) -> None:
+def metrics_sync(campaign: str | None = typer.Option(None, "--campaign", "-c")) -> None:
     """Pull metrics from each platform API for published posts."""
     cid = campaigns.get(campaign).id if campaign else None
     out = run_job("sync_metrics", {"campaign_id": cid}, label="sync metrics")
@@ -505,9 +529,9 @@ def metrics_sync(campaign: Optional[str] = typer.Option(None, "--campaign", "-c"
 
 
 @metrics_app.command("add")
-def metrics_add(post_id: int, views: int, likes: Optional[int] = None, comments: Optional[int] = None,
-                shares: Optional[int] = None, saves: Optional[int] = None,
-                payout: Optional[float] = typer.Option(None, help="Confirmed payout for this post")) -> None:
+def metrics_add(post_id: int, views: int, likes: int | None = None, comments: int | None = None,
+                shares: int | None = None, saves: int | None = None,
+                payout: float | None = typer.Option(None, help="Confirmed payout for this post")) -> None:
     """Record a snapshot by hand (e.g. from a campaign dashboard)."""
     metrics.record(post_id, views=views, likes=likes, comments=comments, shares=shares, saves=saves)
     if payout is not None:
@@ -548,7 +572,7 @@ def earnings(campaign: str) -> None:
 
 
 @app.command()
-def insights(campaign: Optional[str] = typer.Option(None, "--campaign", "-c")) -> None:
+def insights(campaign: str | None = typer.Option(None, "--campaign", "-c")) -> None:
     """Cohorts, calibration and regression over published results."""
     cid = campaigns.get(campaign).id if campaign else None
     console.print_json(json.dumps(perf.insights(cid), default=str))
@@ -561,7 +585,7 @@ def optimize(campaign: str, apply: bool = False) -> None:
 
 
 @app.command()
-def cost(campaign: Optional[str] = typer.Option(None, "--campaign", "-c")) -> None:
+def cost(campaign: str | None = typer.Option(None, "--campaign", "-c")) -> None:
     console.print_json(json.dumps(costs.summary(campaigns.get(campaign).id if campaign else None)))
 
 
@@ -569,7 +593,7 @@ def cost(campaign: Optional[str] = typer.Option(None, "--campaign", "-c")) -> No
 
 @exp_app.command("create")
 def exp_create(campaign: str, name: str, factor: str, values: str = typer.Option(..., help="comma list"),
-               hypothesis: Optional[str] = None, min_samples: int = 5) -> None:
+               hypothesis: str | None = None, min_samples: int = 5) -> None:
     vals: list[Any] = []
     for v in values.split(","):
         v = v.strip()
@@ -606,7 +630,7 @@ def brand_list() -> None:
 # --- jobs ---------------------------------------------------------------------------------------------------
 
 @jobs_app.command("list")
-def jobs_list(status: Optional[str] = None, limit: int = 30) -> None:
+def jobs_list(status: str | None = None, limit: int = 30) -> None:
     t = Table("id", "kind", "status", "progress", "attempts", "message")
     for j in jobs.list_jobs(status, limit=limit):
         t.add_row(str(j.id), j.kind, j.status, f"{j.progress:.0%}", f"{j.attempts}/{j.max_attempts}",
@@ -648,9 +672,9 @@ def run(campaign: str, top: int = 5, max_candidates: int = 40,
 
 
 @live_app.command("start")
-def live_start(campaign: str, file: Optional[Path] = None, url: Optional[str] = None,
+def live_start(campaign: str, file: Path | None = None, url: str | None = None,
                kind: str = typer.Option("file", help="file | hls | youtube"), speed: float = 1.0,
-               chunk_seconds: int = 30, window_seconds: int = 120, max_seconds: Optional[float] = None,
+               chunk_seconds: int = 30, window_seconds: int = 120, max_seconds: float | None = None,
                render_top: int = 0, queue: bool = False) -> None:
     """Clip a live stream (or replay a file as one) into the review queue."""
     target = str(file.resolve()) if file else url

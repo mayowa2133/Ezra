@@ -20,8 +20,8 @@ MODEL_CACHE = Path(os.environ.get("EZRA_TEST_MODEL_CACHE", Path.home() / ".cache
 
 
 def _reset():
-    from ezra.config import reset_settings
     from ezra import storage
+    from ezra.config import reset_settings
 
     reset_settings()
     storage._storage = None

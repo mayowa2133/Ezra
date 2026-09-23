@@ -26,7 +26,7 @@ class Word:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Word":
+    def from_dict(cls, d: dict[str, Any]) -> Word:
         return cls(w=d["w"], s=float(d["s"]), e=float(d["e"]), p=d.get("p"), spk=d.get("spk"))
 
 

@@ -21,8 +21,19 @@ from .compose import RenderError, compose
 from .spec import PLATFORM_PRESETS, RenderSpec, spec_from_brand
 
 Progress = Callable[[float, str], None]
-__all__ = ["RenderSpec", "RenderError", "render_candidate", "render_top", "rerender", "create_variant",
-           "export_clip", "get_clip", "list_clips", "clip_dict", "version_dict"]
+__all__ = [
+    "RenderError",
+    "RenderSpec",
+    "clip_dict",
+    "create_variant",
+    "export_clip",
+    "get_clip",
+    "list_clips",
+    "render_candidate",
+    "render_top",
+    "rerender",
+    "version_dict",
+]
 
 
 def _default_spec(cand: Candidate, overrides: dict[str, Any] | None) -> RenderSpec:
@@ -117,7 +128,7 @@ def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None
             cd.status = "rendered"
     costs.record("render", quantity=time.time() - t0, unit="seconds", campaign_id=cand.campaign_id,
                  source_id=cand.source_id, clip_id=clip_id, version=vnum, output_seconds=round(result.duration, 1))
-    costs.record("storage", quantity=float(storage.size(keys["video_key"])), unit="bytes",
+    costs.record("storage", quantity=float(storage.size(str(keys["video_key"]))), unit="bytes",
                  campaign_id=cand.campaign_id, clip_id=clip_id)
     audit.record("clip.rendered", "clip", clip_id, version=vnum, layout=result.layout)
     return get_clip(clip_id)
@@ -130,8 +141,10 @@ def render_top(campaign: str | int | None = None, source_id: int | None = None, 
     chosen = pool[:top]
     out = []
     for i, c in enumerate(chosen):
-        out.append(render_candidate(c.id, spec, progress=(lambda f, m, i=i: progress((i + f) / len(chosen), m))
-                                    if progress else None))
+        step: Progress | None = None
+        if progress is not None:
+            step = lambda f, m, i=i, p=progress: p((i + f) / len(chosen), m)  # noqa: E731
+        out.append(render_candidate(c.id, spec, progress=step))
     return out
 
 

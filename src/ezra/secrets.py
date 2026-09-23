@@ -22,8 +22,8 @@ from .config import get_settings
 ENV_ALIASES = {
     "upload-post": "UPLOAD_POST_API_KEY",
     "youtube-client": "YOUTUBE_CLIENT_SECRET_JSON",
-    "tiktok-client": "TIKTOK_CLIENT_SECRET",
-    "instagram-client": "INSTAGRAM_APP_SECRET",
+    "tiktok-client": "TIKTOK_CLIENT_JSON",
+    "instagram-client": "INSTAGRAM_CLIENT_JSON",
     "huggingface": "HF_TOKEN",
     "pexels": "PEXELS_API_KEY",
     "openshorts": "OPENSHORTS_API_KEY",

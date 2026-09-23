@@ -34,10 +34,20 @@ ezra = "ezra.cli:main"
 local = [
     "faster-whisper>=1.2.1",
     "opencv-python-headless>=4.8,<5",
-    "scenedetect[opencv-headless]>=0.7",
+    "scenedetect>=0.7",
 ]
 mediapipe = [
     "mediapipe>=0.10",
+    "opencv-python-headless>=4.8,<5",
+]
+
+[tool.uv]
+# One OpenCV only: opencv-python-headless 4.x (Haar cascades ship with 4.x, not 5).
+# scenedetect and mediapipe depend on the GUI builds, which install over the same
+# `cv2` module; exclude them so the headless build is the one imported everywhere.
+override-dependencies = [
+    "opencv-python; sys_platform == 'never'",
+    "opencv-contrib-python; sys_platform == 'never'",
 ]
 
 [build-system]
@@ -54,3 +64,33 @@ dev = [
     "scikit-image>=0.26.0",
     "types-pyyaml>=6.0.12.20260906",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["src/ezra/db/migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC"]
+ignore = [
+    "B008",    # typer/fastapi declare parameters with calls in defaults
+    "SIM108",  # ternaries are not always clearer
+    "RUF001", "RUF002", "RUF003",  # typographic characters in strings/comments are intended
+    "B905",    # zip(a, a[1:]) pairs are intentionally unequal
+    "RUF005", "RUF007", "RUF046", "SIM105",  # style preferences, not defects
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E731"]
+"src/ezra/benchmark/fixtures.py" = ["E501"]   # scripted dialogue
+"src/ezra/analysis/text.py" = ["E501"]        # word lexicon
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["ezra"]
+mypy_path = "src"
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true
+exclude = ["src/ezra/db/migrations/"]
+plugins = ["pydantic.mypy"]

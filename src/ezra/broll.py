@@ -190,7 +190,8 @@ def propose(candidate_id: int, max_inserts: int = 2, spec: dict[str, Any] | None
         if not concrete:
             continue
         query = " ".join(dict.fromkeys(t for t in tokens(text) if len(t) > 4))[:60] or concrete[0]
-        proposals.append({"at": round(sent[0].s + 0.2, 2), "duration": round(min(3.0, max(1.5, sent[-1].e - sent[0].s)), 2),
+        span = sent[-1].e - sent[0].s
+        proposals.append({"at": round(sent[0].s + 0.2, 2), "duration": round(min(3.0, max(1.5, span)), 2),
                           "query": query, "reason": f"illustrates: {text[:80]}", "score": len(concrete)})
     proposals.sort(key=lambda p: -p["score"])
     chosen: list[dict[str, Any]] = []

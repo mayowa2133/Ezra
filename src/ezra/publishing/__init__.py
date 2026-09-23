@@ -12,7 +12,7 @@ Every publish attempt is audited.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -26,8 +26,19 @@ from ..storage import get_storage
 from .base import PostRequest, PublishError, pkce_pair
 from .providers import PUBLISHERS, get_publisher
 
-__all__ = ["add_account", "list_accounts", "connect_start", "connect_finish", "publish_clip", "run_publish",
-           "cancel_post", "list_posts", "post_dict", "account_dict", "PublishError"]
+__all__ = [
+    "PublishError",
+    "account_dict",
+    "add_account",
+    "cancel_post",
+    "connect_finish",
+    "connect_start",
+    "list_accounts",
+    "list_posts",
+    "post_dict",
+    "publish_clip",
+    "run_publish",
+]
 
 _http_client: httpx.Client | None = None   # tests inject a MockTransport-backed client
 
@@ -104,7 +115,7 @@ def connect_finish(provider: str, code: str, state: str, redirect_uri: str | Non
         cred.scopes = list(pub.oauth_scopes)
         cred.status = "active"
         if token.get("expires_at"):
-            cred.expires_at = datetime.fromtimestamp(token["expires_at"], tz=timezone.utc)
+            cred.expires_at = datetime.fromtimestamp(token["expires_at"], tz=UTC)
     meta = {k: token[k] for k in ("channel_id", "ig_user_id", "open_id") if token.get(k)}
     acc = add_account(pub.platforms[0], provider, label, credential_ref=ref, meta=meta)
     audit.record("account.connected", "publish_account", acc.id, provider=provider, label=label)
@@ -125,7 +136,7 @@ def _default_account(platform: str) -> PublishAccount:
 
 def posting_counts(campaign_id: int | None, when: datetime, tz: str = "UTC") -> dict[str, Any]:
     local = when.astimezone(ZoneInfo(tz))
-    day_start = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    day_start = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
     day_end = day_start + timedelta(days=1)
     with db.session() as s:
         q = select(Post.platform, func.count()).where(
@@ -134,7 +145,7 @@ def posting_counts(campaign_id: int | None, when: datetime, tz: str = "UTC") -> 
             func.coalesce(Post.scheduled_at, Post.created_at) < day_end).group_by(Post.platform)
         if campaign_id is not None:
             q = q.where(Post.campaign_id == campaign_id)
-        rows = dict(s.execute(q).all())
+        rows: dict[str, int] = {platform: int(n) for platform, n in s.execute(q).all()}
     return {"day_total": sum(rows.values()), "day_by_platform": rows}
 
 
@@ -255,7 +266,7 @@ def _parse_when(when: datetime | str, tz: str | None) -> datetime:
         dt = dt.replace(tzinfo=ZoneInfo(tz or "UTC"))
     if dt < utcnow() - timedelta(minutes=1):
         raise ValueError(f"schedule time {dt.isoformat()} is in the past")
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 def run_publish(post_id: int) -> dict[str, Any]:
@@ -272,13 +283,15 @@ def run_publish(post_id: int) -> dict[str, Any]:
         raise PublishError(f"post {post_id} has no account")
     clip = render.get_clip(post.clip_id)
     v = next((x for x in clip.versions if x.id == post.clip_version_id), None) or render.current_version(clip)
+    if v is None or not v.video_key:
+        raise PublishError(f"clip {clip.id} has no rendered video")
     st = get_storage()
     meta = (clip.platform_metadata or {}).get(post.platform, {})
-    req = PostRequest(video=st.local_path(v.video_key), title=post.title or clip.title,  # type: ignore[union-attr]
+    req = PostRequest(video=st.local_path(v.video_key), title=post.title or clip.title,
                       caption=post.caption or meta.get("caption") or clip.title or "",
                       description=meta.get("description"), hashtags=meta.get("hashtags") or clip.hashtags or [],
                       visibility=post.visibility,
-                      thumbnail=st.local_path(v.thumbnail_key) if v and v.thumbnail_key else None)  # type: ignore[union-attr]
+                      thumbnail=st.local_path(v.thumbnail_key) if v.thumbnail_key else None)
     pub = _publisher(acc.provider)
     account = account_dict(acc) | {"credential_ref": acc.credential_ref, "meta": acc.meta or {}}
     try:
@@ -323,7 +336,7 @@ def refresh_statuses() -> list[dict[str, Any]]:
         pub = _publisher(acc.provider)
         try:
             res = pub.refresh_status(account_dict(acc) | {"credential_ref": acc.credential_ref, "meta": acc.meta or {}},
-                                     post.external_id)  # type: ignore[arg-type]
+                                     post.external_id)
         except PublishError as e:
             with db.session() as s:
                 p = s.get(Post, post.id)
@@ -359,7 +372,8 @@ def retry_post(post_id: int, actor: str = "user") -> dict[str, Any]:
         if p.status != "failed":
             raise ValueError(f"post {post_id} is {p.status}; only failed posts can be retried")
         p.status, p.error = "publishing", None
-    job = jobs.enqueue("publish_post", {"post_id": post_id}, dedupe_key=f"publish-{post_id}-retry-{utcnow().timestamp()}")
+    job = jobs.enqueue("publish_post", {"post_id": post_id},
+                       dedupe_key=f"publish-{post_id}-retry-{utcnow().timestamp()}")
     audit.record("post.retry", "post", post_id, actor=actor)
     return {"post_id": post_id, "job_id": job.id}
 
@@ -383,7 +397,10 @@ def list_posts(campaign: str | int | None = None, status: str | None = None) -> 
 
 
 def post_dict(p: Post) -> dict[str, Any]:
-    iso = lambda d: db.aware(d).isoformat() if d else None  # noqa: E731
+    def iso(d: datetime | None) -> str | None:
+        a = db.aware(d)
+        return a.isoformat() if a else None
+
     return {"id": p.id, "clip_id": p.clip_id, "clip_version_id": p.clip_version_id, "account_id": p.account_id,
             "campaign_id": p.campaign_id, "platform": p.platform, "provider": p.provider, "status": p.status,
             "visibility": p.visibility, "external_id": p.external_id, "url": p.url, "title": p.title,

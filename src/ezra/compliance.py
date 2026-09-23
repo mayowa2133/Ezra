@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .db.models import Campaign, CampaignRule, Source
@@ -45,7 +45,7 @@ class RuleResult:
 
 
 def _utc(d: datetime) -> datetime:
-    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    return d if d.tzinfo else d.replace(tzinfo=UTC)
 
 
 def mentions(text: str, term: str) -> bool:
@@ -131,7 +131,9 @@ def _check(rule: CampaignRule, stage: str, ev: dict[str, Any]) -> RuleResult | N
     if k == "cta" and "copy_text" in ev:
         want = re.sub(r"\W+", " ", p.get("text", "").lower()).strip()
         have = re.sub(r"\W+", " ", ev["copy_text"].lower())
-        return res("pass", "CTA present") if want and want in have else res("violation", f"CTA missing: {p.get('text')}")
+        if want and want in have:
+            return res("pass", "CTA present")
+        return res("violation", f"CTA missing: {p.get('text')}")
     if k == "window" and ev.get("when"):
         when = _utc(ev["when"])
         starts = _utc(datetime.fromisoformat(p["starts"])) if p.get("starts") else None

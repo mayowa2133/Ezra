@@ -55,7 +55,7 @@ def sync(campaign_id: int | None = None) -> dict[str, Any]:
         pub = _publisher(acc.provider)
         try:
             m = pub.metrics(account_dict(acc) | {"credential_ref": acc.credential_ref, "meta": acc.meta or {}},
-                            p.external_id)  # type: ignore[arg-type]
+                            p.external_id)
         except Exception as e:  # one account's failure must not stop the sync
             errors.append({"post_id": p.id, "error": f"{type(e).__name__}: {e}"[:300]})
             continue
@@ -85,7 +85,7 @@ def import_csv(text: str, provider: str = "csv") -> dict[str, Any]:
             if v:
                 vals[k] = float(v) if k in ("avg_watch_seconds", "completion_rate") else int(float(v))
         when = datetime.fromisoformat(row["captured_at"]) if row.get("captured_at") else None
-        record(post_id, provider=provider, captured_at=when, **vals)
+        record(post_id, provider, when, None, **vals)
         stored += 1
     return {"snapshots": stored, "rows_without_post": missing}
 

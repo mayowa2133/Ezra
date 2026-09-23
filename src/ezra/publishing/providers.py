@@ -15,11 +15,10 @@ local-export  Writes the post (video + metadata) to a folder for manual
 from __future__ import annotations
 
 import json
-
 import re
 import shutil
 import time
-from datetime import timezone
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +26,7 @@ import httpx
 
 from .. import secrets
 from ..config import get_settings
-from .base import (MetricsResult, PostRequest, Publisher, PublishError, PublishResult, expires, with_query)
+from .base import MetricsResult, PostRequest, Publisher, PublishError, PublishResult, expires, with_query
 
 
 class YouTubePublisher(Publisher):
@@ -76,7 +75,7 @@ class YouTubePublisher(Publisher):
                                   "unlisted" if req.visibility == "unlisted" else "public",
                                   "selfDeclaredMadeForKids": False}
         if req.scheduled_at and req.visibility == "public":
-            status.update(privacyStatus="private", publishAt=req.scheduled_at.astimezone(timezone.utc)
+            status.update(privacyStatus="private", publishAt=req.scheduled_at.astimezone(UTC)
                           .strftime("%Y-%m-%dT%H:%M:%S.000Z"))
         body = {"snippet": {"title": (req.title or req.caption)[:100], "description": req.description or req.caption,
                             "tags": [h.lstrip("#") for h in req.hashtags][:15], "categoryId": "22"},
@@ -318,7 +317,7 @@ class UploadPostPublisher(Publisher):
             data.update(youtube_title=(req.title or req.caption)[:100], youtube_description=req.description or "",
                         privacyStatus="private" if req.visibility == "private" else "public")
         if req.scheduled_at:
-            data["scheduled_date"] = req.scheduled_at.astimezone(timezone.utc).isoformat()
+            data["scheduled_date"] = req.scheduled_at.astimezone(UTC).isoformat()
         with req.video.open("rb") as fh:
             d = self._check(self.http.post(f"{self.api}/upload", headers=self._headers(), data=data,
                                            files={"video": (req.video.name, fh, "video/mp4")}), "upload")
@@ -381,4 +380,4 @@ def get_publisher(name: str, client: httpx.Client | None = None) -> Publisher:
     return PUBLISHERS[name](client)
 
 
-__all__ = ["PUBLISHERS", "get_publisher", "PublishError"]
+__all__ = ["PUBLISHERS", "PublishError", "get_publisher"]

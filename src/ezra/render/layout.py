@@ -134,7 +134,7 @@ def x_expr(pieces: list[tuple[float, float, float]], axis: str = "x") -> str:
     if not pieces:
         return at(0.5)
     expr = at(pieces[-1][2])
-    for a, b, c in reversed(pieces[:-1]):
+    for _, b, c in reversed(pieces[:-1]):
         expr = f"if(lt(t,{b:.3f}),{at(c)},{expr})"
     return expr
 

@@ -1,25 +1,139 @@
-# clipper itself runs on your machine (uv run clipper ...). This file only starts the
-# optional OpenShorts backend, used by `clipper run --openshorts` / the run_openshorts tool.
+# Ezra, self-hosted: PostgreSQL + MinIO (S3) + API + worker + dashboard.
 #
-#   docker compose --profile openshorts up -d
+#   cp .env.example .env        # set EZRA_API_TOKEN and EZRA_SECRET_KEY at least
+#   docker compose up -d --build
+#   open http://localhost:3000  # dashboard;  API on http://localhost:8000/docs
 #
-# OpenShorts needs its own moment-picker model: either GEMINI_API_KEY, or a local
-# OpenAI-compatible server such as Ollama (LLM_BASE_URL below, no API key needed).
+# `migrate` applies the Alembic migrations once before the API and worker start.
+# CLI inside the stack:  docker compose run --rm api ezra campaign list
+# Tests against Postgres: docker compose --profile test run --rm test
+x-ezra-env: &ezra-env
+  EZRA_DATABASE_URL: postgresql+psycopg://ezra:${POSTGRES_PASSWORD:-ezra}@postgres:5432/ezra
+  EZRA_STORAGE: s3
+  EZRA_S3_ENDPOINT: http://minio:9000
+  EZRA_S3_BUCKET: ${EZRA_S3_BUCKET:-ezra}
+  EZRA_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-ezra}
+  EZRA_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-ezra-minio-secret}
+  EZRA_API_TOKEN: ${EZRA_API_TOKEN:-}
+  EZRA_SECRET_KEY: ${EZRA_SECRET_KEY:-}
+  EZRA_PUBLIC_URL: ${EZRA_PUBLIC_URL:-http://localhost:8000}
+  EZRA_WEB_URL: ${EZRA_WEB_URL:-http://localhost:3000}
+  EZRA_WHISPER_MODEL: ${EZRA_WHISPER_MODEL:-small}
+  EZRA_LLM: ${EZRA_LLM:-heuristic}
+  EZRA_LLM_BASE_URL: ${EZRA_LLM_BASE_URL:-}
+  EZRA_LLM_MODEL: ${EZRA_LLM_MODEL:-}
+  EZRA_LLM_API_KEY: ${EZRA_LLM_API_KEY:-}
+  UPLOAD_POST_API_KEY: ${UPLOAD_POST_API_KEY:-}
+  YOUTUBE_CLIENT_SECRET_JSON: ${YOUTUBE_CLIENT_SECRET_JSON:-}
+  TIKTOK_CLIENT_JSON: ${TIKTOK_CLIENT_JSON:-}
+  INSTAGRAM_CLIENT_JSON: ${INSTAGRAM_CLIENT_JSON:-}
+  HF_TOKEN: ${HF_TOKEN:-}
+  PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+
+x-ezra: &ezra
+  build: { context: ., target: runtime }
+  image: ezra:latest
+  environment: *ezra-env
+  volumes:
+    - ezra-home:/data        # work files, S3 download cache, encrypted secret store
+    - ezra-models:/models    # whisper / face models, downloaded on first use
+  restart: unless-stopped
+
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ezra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ezra}
+      POSTGRES_DB: ezra
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ezra -d ezra"]
+      interval: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ezra}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-ezra-minio-secret}
+    ports: ["127.0.0.1:9001:9001"]   # MinIO console, local only
+    volumes: [minio:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    <<: *ezra
+    command: ["ezra", "db", "upgrade"]
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *ezra
+    ports: ["${EZRA_API_PORT:-8000}:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      minio: { condition: service_healthy }
+
+  worker:
+    <<: *ezra
+    command: ["ezra", "worker"]
+    healthcheck: { disable: true }
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      minio: { condition: service_healthy }
+
+  web:
+    build: ./apps/web
+    image: ezra-web:latest
+    environment:
+      EZRA_API_URL: http://api:8000
+      EZRA_API_TOKEN: ${EZRA_API_TOKEN:-}
+    ports: ["${EZRA_WEB_PORT:-3000}:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  # The test suite against PostgreSQL + MinIO (profile: test).
+  test:
+    profiles: [test]
+    build: { context: ., target: test }
+    image: ezra-test:latest
+    environment:
+      EZRA_TEST_DATABASE_URL: postgresql+psycopg://ezra:${POSTGRES_PASSWORD:-ezra}@postgres:5432/ezra_test
+      EZRA_TEST_S3_ENDPOINT: http://minio:9000
+      EZRA_TEST_MODEL_CACHE: /models
+      EZRA_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-ezra}
+      EZRA_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-ezra-minio-secret}
+    volumes: [ezra-models:/models]
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+
+  # Optional self-hosted OpenShorts clip engine (profile: openshorts), used with
+  # EZRA_CLIP_ENGINE=openshorts. Its moment picker needs GEMINI_API_KEY or a
+  # local OpenAI-compatible server.
   openshorts:
     profiles: [openshorts]
     build: https://github.com/mutonby/openshorts.git
-    container_name: openshorts-backend
-    ports:
-      - "8000:8000"
+    ports: ["127.0.0.1:8001:8000"]
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - LLM_BASE_URL=${OPENSHORTS_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
       - LLM_MODEL=${OPENSHORTS_LLM_MODEL:-qwen2.5:14b}
       - RATE_LIMIT_ENABLED=0
-    volumes:
-      - openshorts-output:/app/output
+    volumes: [openshorts-output:/app/output]
     restart: unless-stopped
 
 volumes:
+  postgres:
+  minio:
+  ezra-home:
+  ezra-models:
   openshorts-output:

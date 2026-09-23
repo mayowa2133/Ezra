@@ -24,10 +24,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import candidates, render, sources
+from . import candidates, db, render, sources
 from .config import get_settings
 from .db.models import Candidate
-from . import db
 
 
 class LiveSource(ABC):

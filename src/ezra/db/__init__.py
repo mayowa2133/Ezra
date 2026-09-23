@@ -7,7 +7,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, event
@@ -30,7 +30,7 @@ def engine() -> Engine:
                 _engine = create_engine(url, connect_args={"check_same_thread": False, "timeout": 30})
 
                 @event.listens_for(_engine, "connect")
-                def _sqlite_pragmas(dbapi_conn, _record):  # type: ignore[no-untyped-def]
+                def _sqlite_pragmas(dbapi_conn, _record):
                     cur = dbapi_conn.cursor()
                     cur.execute("PRAGMA foreign_keys = ON")
                     cur.execute("PRAGMA journal_mode = WAL")
@@ -91,4 +91,4 @@ def aware(dt: datetime | None) -> datetime | None:
     """SQLite hands back naive datetimes; everything in Ezra is UTC-aware."""
     if dt is None:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)

@@ -107,12 +107,17 @@ def _campaign_dict(c: Campaign | None) -> dict[str, Any] | None:
     return campaigns.to_dict(c) if c else None
 
 
+def _campaign_for(src: Any, campaign: str | int | None) -> Any:
+    """The campaign named explicitly, else the source's own, else None."""
+    ref = campaign if campaign is not None else src.campaign_id
+    return campaigns.get(ref) if ref is not None else None
+
+
 def find_candidates(source_id: int, campaign: str | int | None = None, max_candidates: int = 40,
                     progress: Progress | None = None) -> list[Candidate]:
     say = progress or (lambda f, m: None)
     src = sources.get(source_id)
-    camp = campaigns.get(campaign if campaign is not None else src.campaign_id) \
-        if (campaign is not None or src.campaign_id) else None
+    camp = _campaign_for(src, campaign)
     if src.status != "analyzed" or analysis.get(source_id, "topics") is None:
         analysis.analyze_source(source_id, progress=lambda f, m: say(0.6 * f, m))
     say(0.62, "proposing windows")
@@ -179,8 +184,7 @@ def create_custom(source_id: int, start: float, end: float, title: str | None = 
                   campaign: str | int | None = None) -> Candidate:
     """A candidate chosen by a person or an agent. Boundaries snap to words."""
     src = sources.get(source_id)
-    camp = campaigns.get(campaign if campaign is not None else src.campaign_id) \
-        if (campaign is not None or src.campaign_id) else None
+    camp = _campaign_for(src, campaign)
     segments = load_segments(source_id)
     words = [w for s in segments for w in s.words]
     s0, e0 = snap(words, start, end, src.duration)
@@ -306,7 +310,7 @@ def rank(source_id: int | None = None, campaign: str | int | None = None, candid
         explanations = dict(c.score_explanations or {})
         if agent:  # scores supplied by an MCP agent win over the heuristic
             final = {k: float(agent[k]) for k in FACTORS}
-            scorer, conf = f"agent+heuristic", 0.65
+            scorer, conf = "agent+heuristic", 0.65
         elif crit:
             final = {k: round(0.65 * float(crit["scores"][k]) + 0.35 * float(heur[k]), 1) for k in FACTORS}
             scorer, conf = f"{crit['_provider']}+heuristic", 0.6
@@ -328,13 +332,13 @@ def rank(source_id: int | None = None, campaign: str | int | None = None, candid
         explanations["performance_prior"] = {"score": prior_score, "confidence": prior_conf, "basis": basis}
         if penalty:
             explanations["diversity"] = "overlaps a higher-ranked candidate"
-        comp = {"status": c.compliance_status, "reasons": c.compliance_reasons}
+        comp: dict[str, Any] = {"status": c.compliance_status, "reasons": c.compliance_reasons}
         if crit and crit.get("rule_checks"):
             verdicts = {str(r["rule_id"]): r for r in crit["rule_checks"]}
             src = sources.get(c.source_id)
             comp = compliance.evaluate(camp, "candidate", duration=c.end - c.start, transcript=c.transcript,
                                        source=src, speakers=c.speakers, llm_rule_verdicts=verdicts)
-        ev = economics.expected_value(camp, rank_score, models.get(c.campaign_id)) if camp else {}
+        ev = economics.expected_value(camp, rank_score, models.get(camp.id)) if camp else {}
         with db.session() as s:
             row = s.get(Candidate, c.id)
             assert row is not None

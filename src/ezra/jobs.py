@@ -18,7 +18,7 @@ import socket
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, update
@@ -151,7 +151,7 @@ def claim(job_id: int | None = None, kinds: list[str] | None = None) -> Job | No
         res = s.execute(update(Job).where(Job.id == picked, Job.status == "queued").values(
             status="running", started_at=now, heartbeat_at=now, worker=_worker_name(),
             attempts=Job.attempts + 1, message=None))
-        if res.rowcount != 1:  # lost the race (SQLite path)
+        if getattr(res, "rowcount", 1) != 1:  # lost the race (SQLite path)
             return None
         s.add(JobLog(job_id=picked, message=f"started by {_worker_name()}"))
     return get(picked)
@@ -194,8 +194,8 @@ def _record_failure(job_id: int, exc: BaseException) -> None:
     with db.session() as s:
         job = s.get(Job, job_id)
         assert job is not None
-        error = {"type": type(exc).__name__, "message": str(exc)[:4000],
-                 "traceback": traceback.format_exc()[-6000:], "attempt": job.attempts}
+        error: dict[str, Any] = {"type": type(exc).__name__, "message": str(exc)[:4000],
+                                 "traceback": traceback.format_exc()[-6000:], "attempt": job.attempts}
         job.error = error
         permanent = isinstance(exc, (ValueError, LookupError, PermissionError))
         if not permanent and job.attempts < job.max_attempts:
@@ -277,10 +277,10 @@ def as_dict(job: Job, with_logs: bool = False) -> dict[str, Any]:
          "created_at": _iso(job.created_at), "started_at": _iso(job.started_at),
          "finished_at": _iso(job.finished_at)}
     if with_logs:
-        d["logs"] = [{"at": _iso(l.at), "level": l.level, "message": l.message} for l in logs(job.id)]
+        d["logs"] = [{"at": _iso(x.at), "level": x.level, "message": x.message} for x in logs(job.id)]
     return d
 
 
 def _iso(dt: datetime | None) -> str | None:
     dt = db.aware(dt)
-    return dt.astimezone(timezone.utc).isoformat(timespec="seconds") if dt else None
+    return dt.astimezone(UTC).isoformat(timespec="seconds") if dt else None
