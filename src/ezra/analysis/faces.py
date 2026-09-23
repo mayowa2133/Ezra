@@ -52,16 +52,32 @@ class HaarDetector(FaceDetector):
         self.cv2 = cv2
         self.frontal = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
         self.profile = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
+        self.eye = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
+
+    def _has_eye(self, gray: np.ndarray, box: tuple[int, int, int, int]) -> bool:
+        """Frontal Haar fires on textured non-faces (clothing, patterns); a real
+        face has an eye in its upper part. Small faces are upscaled first because
+        the eye cascade's base window is ~20px."""
+        x, y, fw, fh = box
+        roi = gray[y:y + int(fh * 0.6), x:x + fw]
+        if roi.size == 0:
+            return False
+        scale = max(1.0, 160 / max(1, fw))
+        roi = self.cv2.resize(roi, None, fx=scale, fy=scale)
+        return len(self.eye.detectMultiScale(roi, 1.1, 4, minSize=(16, 16))) > 0
 
     def detect(self, gray: np.ndarray, rgb: np.ndarray | None = None) -> list[Face]:
         h, w = gray.shape
-        found = list(self.frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(24, 24)))
+        loose = list(self.frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(24, 24)))
+        found = [b for b in loose if self._has_eye(gray, tuple(b))]
+        if not found and loose:  # eyes can be missed (glasses, tiny faces): demand stronger evidence instead
+            found = list(self.frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=10, minSize=(24, 24)))
         if not found:  # speakers turn sideways toward their guest
-            found = list(self.profile.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(24, 24)))
+            found = list(self.profile.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=8, minSize=(24, 24)))
             if not found:
                 flipped = self.cv2.flip(gray, 1)
                 found = [(w - x - fw, y, fw, fh) for (x, y, fw, fh)
-                         in self.profile.detectMultiScale(flipped, scaleFactor=1.1, minNeighbors=6, minSize=(24, 24))]
+                         in self.profile.detectMultiScale(flipped, scaleFactor=1.1, minNeighbors=8, minSize=(24, 24))]
         return [Face(float((x + fw / 2) / w), float((y + fh / 2) / h), float(fw / w), float(fh / h))
                 for (x, y, fw, fh) in found]
 
