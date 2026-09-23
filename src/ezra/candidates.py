@@ -1,0 +1,460 @@
+"""Candidate generation and ranking.
+
+    source → transcript → topic segments → candidate windows (ClipScout)
+           → cheap features + heuristic factor scores
+           → diversity-aware shortlist (DiversityCritic)
+           → compliance (ComplianceCritic, independent of scores)
+           → optional model critique of the shortlist (ClipCritic)
+           → performance prior from history (PerformanceCritic)
+           → rank score + expected value → render only the strongest
+
+Nothing is rendered here; renders cost minutes, candidates cost milliseconds.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from typing import Any
+
+from sqlalchemy import delete, select
+
+from . import analysis, campaigns, compliance, db, economics, llm, sources
+from . import analytics as perf
+from .db.models import Campaign, Candidate, Clip
+from .scoring import heuristic
+from .scoring.features import Window, extract
+from .transcription import edges, load_segments, snap
+from .transcription.base import Segment
+
+Progress = Callable[[float, str], None]
+FACTORS = ["hook", "retention", "context", "emotion", "novelty", "discussion", "payoff", "visual", "campaign_fit"]
+FACTOR_COLUMNS = {"hook": "hook_score", "retention": "retention_score", "context": "context_score",
+                  "emotion": "emotion_score", "novelty": "novelty_score", "discussion": "discussion_score",
+                  "payoff": "payoff_score", "visual": "visual_score", "campaign_fit": "campaign_fit_score"}
+
+
+# --- ClipScout ------------------------------------------------------------------
+
+def scout_windows(source_id: int, segments: list[Segment], topics: list[dict[str, Any]],
+                  min_d: float, max_d: float) -> list[Window]:
+    """Every sentence start, at three target lengths, ending on a sentence end
+    inside [min_d, max_d]."""
+    targets = sorted({round(min_d + (max_d - min_d) * f, 1) for f in (0.15, 0.4, 0.75)})
+    out: list[Window] = []
+    seen: set[tuple[int, int]] = set()
+    for i in range(len(segments)):
+        for target in targets:
+            j = i
+            while j < len(segments) and segments[j].end - segments[i].start < target:
+                j += 1
+            if j >= len(segments):
+                j = len(segments) - 1
+            # walk back to a sentence end still >= min_d, else forward
+            k = j
+            while k > i and not segments[k].sentence_end:
+                k -= 1
+            if segments[k].end - segments[i].start < min_d:
+                k = j
+                while k < len(segments) - 1 and not segments[k].sentence_end:
+                    k += 1
+            # don't end on a question that opens the next topic
+            while k > i and segments[k].text.rstrip().endswith("?") and \
+                    segments[k - 1].sentence_end and segments[k - 1].end - segments[i].start >= min_d:
+                k -= 1
+            dur = segments[k].end - segments[i].start
+            if not (min_d - 0.5 <= dur <= max_d + 0.5) or (i, k) in seen:
+                continue
+            seen.add((i, k))
+            topic = next((t for t in topics if t["start"] <= segments[i].start < t["end"]), None)
+            out.append(Window(source_id, segments[i].start, segments[k].end, segments[i:k + 1],
+                              before=segments[max(0, i - 2):i], after=segments[k + 1:k + 3], topic=topic))
+    return out
+
+
+def _iou(a: tuple[float, float], b: tuple[float, float]) -> float:
+    inter = max(0.0, min(a[1], b[1]) - max(a[0], b[0]))
+    union = max(a[1], b[1]) - min(a[0], b[0])
+    return inter / union if union > 0 else 0.0
+
+
+def diverse_shortlist(items: list[dict[str, Any]], limit: int, max_iou: float = 0.45,
+                      max_per_topic: int = 4) -> list[dict[str, Any]]:
+    """Greedy non-maximum suppression by content score, capped per topic."""
+    chosen: list[dict[str, Any]] = []
+    per_topic: dict[str, int] = {}
+    for it in sorted(items, key=lambda x: -x["content"]):
+        span = (it["window"].start, it["window"].end)
+        if any(_iou(span, (c["window"].start, c["window"].end)) > max_iou for c in chosen):
+            continue
+        tkey = (it["window"].topic or {}).get("label", "?")
+        if per_topic.get(tkey, 0) >= max_per_topic:
+            continue
+        per_topic[tkey] = per_topic.get(tkey, 0) + 1
+        chosen.append(it)
+        if len(chosen) >= limit:
+            break
+    return chosen
+
+
+def _hook_text(first: str) -> str:
+    text = re.sub(r"^\s*(so|and|but|um|uh|well|okay|anyway)[,\s]+", "", first, flags=re.I).strip()
+    words = text.split()
+    return " ".join(words[:9]).rstrip(",;:") + ("…" if len(words) > 9 else "")
+
+
+def _campaign_dict(c: Campaign | None) -> dict[str, Any] | None:
+    return campaigns.to_dict(c) if c else None
+
+
+def find_candidates(source_id: int, campaign: str | int | None = None, max_candidates: int = 40,
+                    progress: Progress | None = None) -> list[Candidate]:
+    say = progress or (lambda f, m: None)
+    src = sources.get(source_id)
+    camp = campaigns.get(campaign if campaign is not None else src.campaign_id) \
+        if (campaign is not None or src.campaign_id) else None
+    if src.status != "analyzed" or analysis.get(source_id, "topics") is None:
+        analysis.analyze_source(source_id, progress=lambda f, m: say(0.6 * f, m))
+    say(0.62, "proposing windows")
+    segments = load_segments(source_id)
+    rows = analysis.all_for(source_id)
+    topics = rows["topics"].data["topics"] if "topics" in rows else []
+    scenes = rows["scenes"].data.get("scenes", []) if "scenes" in rows else []
+    activity = rows["scenes"].data.get("activity_per_second", []) if "scenes" in rows else []
+    silence = rows["silence"].data.get("regions", []) if "silence" in rows else []
+    faces = rows["faces"].data.get("timeline") if "faces" in rows else None
+    min_d, max_d = (camp.min_duration, camp.max_duration) if camp else (15.0, 60.0)
+    windows = scout_windows(source_id, segments, topics, min_d, max_d)
+    from .analysis.text import tokens
+
+    df: dict[str, int] = {}
+    for seg in segments:
+        for t in set(tokens(seg.text)):
+            df[t] = df.get(t, 0) + 1
+    weights = campaigns.normalized_weights(camp.weights if camp else None)
+    cdict = _campaign_dict(camp)
+    items = []
+    for w in windows:
+        f = extract(w, silence, activity, faces, scenes, topics, df, len(segments))
+        scores, why = heuristic.score(f, cdict)
+        items.append({"window": w, "features": f, "scores": scores, "why": why,
+                      "content": heuristic.content_score(scores, weights)})
+    say(0.75, f"scored {len(items)} windows")
+    shortlist = diverse_shortlist(items, max_candidates)
+    words = [w for s in segments for w in s.words]
+    with db.session() as s:
+        # re-running the scout replaces its own unrendered candidates
+        rendered = select(Clip.candidate_id)
+        s.execute(delete(Candidate).where(Candidate.source_id == source_id, Candidate.origin == "scout",
+                                          Candidate.id.not_in(rendered)))
+    out_ids = []
+    for it in shortlist:
+        w, f = it["window"], it["features"]
+        start, end = snap(words, w.start, w.end, src.duration)
+        comp = compliance.evaluate(camp, "candidate", duration=end - start, transcript=w.text, source=src,
+                                   speakers=f["speakers"])
+        first = w.segments[0].text
+        with db.session() as s:
+            cand = Candidate(
+                campaign_id=camp.id if camp else None, source_id=source_id, start=start, end=end, transcript=w.text,
+                speakers=f["speakers"], topic=(w.topic or {}).get("label"), hook=_hook_text(first),
+                hook_type=heuristic.hook_type(first, f), title=_hook_text(first).rstrip("…"),
+                reason="; ".join(f"{k}: {v}" for k, v in it["why"].items() if k in ("hook", "payoff", "context")),
+                context_before=" ".join(x.text for x in w.before), context_after=" ".join(x.text for x in w.after),
+                origin="scout", features={k: v for k, v in f.items() if k != "vocab"}, scorer="heuristic",
+                confidence=heuristic.CONFIDENCE, content_score=it["content"],
+                score_explanations={"heuristic": it["why"], "heuristic_scores": it["scores"]},
+                compliance_status=comp["status"], compliance_reasons=comp["reasons"],
+                **{FACTOR_COLUMNS[k]: v for k, v in it["scores"].items()})
+            s.add(cand)
+            s.flush()
+            out_ids.append(cand.id)
+    say(0.85, f"{len(out_ids)} candidates")
+    rank(source_id=source_id, progress=lambda f, m: say(0.85 + 0.15 * f, m))
+    return [get(i) for i in out_ids]
+
+
+def create_custom(source_id: int, start: float, end: float, title: str | None = None, hook: str | None = None,
+                  hook_type: str | None = None, reason: str | None = None, origin: str = "manual",
+                  campaign: str | int | None = None) -> Candidate:
+    """A candidate chosen by a person or an agent. Boundaries snap to words."""
+    src = sources.get(source_id)
+    camp = campaigns.get(campaign if campaign is not None else src.campaign_id) \
+        if (campaign is not None or src.campaign_id) else None
+    segments = load_segments(source_id)
+    words = [w for s in segments for w in s.words]
+    s0, e0 = snap(words, start, end, src.duration)
+    inside = [seg for seg in segments if seg.end > s0 and seg.start < e0]
+    if not inside:
+        raise ValueError(f"no speech between {start:.1f}s and {end:.1f}s")
+    win = Window(source_id, s0, e0, inside)
+    rows = analysis.all_for(source_id)
+    f = extract(win, rows["silence"].data.get("regions", []) if "silence" in rows else [],
+                rows["scenes"].data.get("activity_per_second", []) if "scenes" in rows else [],
+                rows["faces"].data.get("timeline") if "faces" in rows else None,
+                rows["scenes"].data.get("scenes", []) if "scenes" in rows else [],
+                rows["topics"].data["topics"] if "topics" in rows else [], {}, 1)
+    scores, why = heuristic.score(f, _campaign_dict(camp))
+    weights = campaigns.normalized_weights(camp.weights if camp else None)
+    comp = compliance.evaluate(camp, "candidate", duration=e0 - s0, transcript=win.text, source=src,
+                               speakers=f["speakers"])
+    with db.session() as s:
+        cand = Candidate(campaign_id=camp.id if camp else None, source_id=source_id, start=s0, end=e0,
+                         transcript=win.text, speakers=f["speakers"], title=title or _hook_text(inside[0].text),
+                         hook=hook or _hook_text(inside[0].text),
+                         hook_type=hook_type or heuristic.hook_type(inside[0].text, f), reason=reason, origin=origin,
+                         features={k: v for k, v in f.items() if k != "vocab"}, scorer="heuristic",
+                         confidence=heuristic.CONFIDENCE, content_score=heuristic.content_score(scores, weights),
+                         score_explanations={"heuristic": why, "heuristic_scores": scores},
+                         compliance_status=comp["status"], compliance_reasons=comp["reasons"],
+                         **{FACTOR_COLUMNS[k]: v for k, v in scores.items()})
+        s.add(cand)
+        s.flush()
+        cid = cand.id
+    rank(candidate_ids=[cid])
+    return get(cid)
+
+
+# --- ranking ----------------------------------------------------------------------
+
+CRITIC_SYSTEM = """You are ClipCritic, a senior short-form editor judging podcast/interview moments for
+TikTok, Instagram Reels and YouTube Shorts on behalf of a performance-paid clipping campaign.
+Score each candidate on every factor 0-100 (50 = average clip a competent editor would post, 80+ = you
+would bet on it, 90+ is rare). Compare candidates against each other. Be concrete in `reason`: what the
+opening does, whether it stands alone, where the payoff lands. Scores are ranking estimates, not
+predictions. For each listed review rule, say whether the clip complies."""
+
+
+def _critic_schema(rule_ids: list[int]) -> dict[str, Any]:
+    factor_props = {k: {"type": "number", "minimum": 0, "maximum": 100} for k in FACTORS}
+    return {"type": "object", "required": ["candidates"], "properties": {"candidates": {"type": "array", "items": {
+        "type": "object", "required": ["id", "scores", "hook_text", "title", "hook_type", "reason", "rule_checks"],
+        "properties": {
+            "id": {"type": "integer"},
+            "scores": {"type": "object", "required": FACTORS, "properties": factor_props},
+            "hook_text": {"type": "string", "description": "On-screen hook, max 10 words"},
+            "title": {"type": "string", "description": "Specific YouTube-style title, max 90 chars"},
+            "hook_type": {"type": "string", "enum": heuristic.HOOK_TYPES},
+            "reason": {"type": "string"},
+            "rule_checks": {"type": "array", "items": {"type": "object", "required": ["rule_id", "compliant", "reason"],
+                                                        "properties": {"rule_id": {"type": "integer"},
+                                                                       "compliant": {"type": "boolean"},
+                                                                       "reason": {"type": "string"}}}}}}}}}
+
+
+def critic_pass(cands: list[Candidate], camp: Campaign | None) -> dict[int, dict[str, Any]]:
+    """One model call over the shortlist; {} when no model is configured."""
+    provider = llm.get_llm()
+    if not provider.available or not cands:
+        return {}
+    review_rules = [r for r in (camp.rules if camp else []) if r.kind in ("forbidden_topic", "freeform")]
+    lines = []
+    if camp:
+        lines.append(f"Campaign: {camp.name}. Brief: {camp.brief or '-'}. Duration {camp.min_duration:g}-"
+                     f"{camp.max_duration:g}s. Platforms: {', '.join(camp.allowed_platforms)}.")
+        if review_rules:
+            lines.append("Review rules:\n" + "\n".join(f"  rule {r.id}: {r.description}" for r in review_rules))
+    learned = [x.text for x in perf.learnings()]
+    if learned:
+        lines.append("Learned from past performance:\n" + "\n".join(f"  - {t}" for t in learned[:10]))
+    for c in cands:
+        lines.append(f"\n[id {c.id}] {c.start:.1f}-{c.end:.1f}s ({c.end - c.start:.0f}s)"
+                     f"\nContext before: {(c.context_before or '')[-300:]}\nCLIP: {c.transcript}")
+    try:
+        res = llm.call(CRITIC_SYSTEM, "\n".join(lines), _critic_schema([r.id for r in review_rules]),
+                       task="clip_critic", campaign_id=camp.id if camp else None, source_id=cands[0].source_id)
+    except llm.LLMUnavailable:
+        return {}
+    return {int(x["id"]): x | {"_provider": res.provider} for x in res.data.get("candidates", [])}
+
+
+def rank(source_id: int | None = None, campaign: str | int | None = None, candidate_ids: list[int] | None = None,
+         use_model: bool = True, critic_top: int = 25, progress: Progress | None = None) -> list[Candidate]:
+    say = progress or (lambda f, m: None)
+    with db.session() as s:
+        q = select(Candidate).where(Candidate.status.in_(("new", "ranked")))
+        if source_id is not None:
+            q = q.where(Candidate.source_id == source_id)
+        if campaign is not None:
+            q = q.where(Candidate.campaign_id == campaigns.get(campaign).id)
+        if candidate_ids:
+            q = q.where(Candidate.id.in_(candidate_ids))
+        cands = list(s.scalars(q))
+    if not cands:
+        return []
+    camp_ids = {c.campaign_id for c in cands}
+    camps = {cid: campaigns.get(cid) for cid in camp_ids if cid is not None}
+    models = {cid: economics.view_model(cid) for cid in camps}
+    critique: dict[int, dict[str, Any]] = {}
+    if use_model:
+        for cid, camp in [(None, None)] + list(camps.items()):
+            group = sorted([c for c in cands if c.campaign_id == cid], key=lambda c: -(c.content_score or 0))
+            group = [c for c in group if c.compliance_status != "FAIL"][:critic_top]
+            if group:
+                say(0.2, f"model critique of {len(group)} candidates")
+                critique.update(critic_pass(group, camp))
+    say(0.7, "ranking")
+    ordered = sorted(cands, key=lambda c: -(c.content_score or 0))
+    kept: list[tuple[float, float]] = []
+    for c in ordered:
+        camp = camps.get(c.campaign_id) if c.campaign_id else None
+        weights = campaigns.normalized_weights(camp.weights if camp else None)
+        heur = (c.score_explanations or {}).get("heuristic_scores") or {k: getattr(c, FACTOR_COLUMNS[k]) or 50
+                                                                         for k in FACTORS}
+        agent = (c.score_explanations or {}).get("agent_scores")
+        crit = critique.get(c.id)
+        explanations = dict(c.score_explanations or {})
+        if agent:  # scores supplied by an MCP agent win over the heuristic
+            final = {k: float(agent[k]) for k in FACTORS}
+            scorer, conf = f"agent+heuristic", 0.65
+        elif crit:
+            final = {k: round(0.65 * float(crit["scores"][k]) + 0.35 * float(heur[k]), 1) for k in FACTORS}
+            scorer, conf = f"{crit['_provider']}+heuristic", 0.6
+            explanations["critic"] = {"reason": crit["reason"], "scores": crit["scores"]}
+        else:
+            final = {k: float(heur[k]) for k in FACTORS}
+            scorer, conf = "heuristic", heuristic.CONFIDENCE
+        content = heuristic.content_score(final, weights)
+        feat = dict(c.features or {})
+        feat.update(hook_type=(crit or {}).get("hook_type") or c.hook_type, topic=c.topic,
+                    opening=" ".join(re.findall(r"[a-z0-9$']+", (c.transcript or "").lower())[:2]))
+        prior_score, prior_conf, basis = perf.prior(feat, c.campaign_id)
+        alpha = 0.35 * prior_conf
+        span = (c.start, c.end)
+        penalty = 15.0 if any(_iou(span, k) > 0.4 for k in kept) else 0.0
+        if c.compliance_status != "FAIL":
+            kept.append(span)
+        rank_score = round((1 - alpha) * content + alpha * prior_score - penalty, 2)
+        explanations["performance_prior"] = {"score": prior_score, "confidence": prior_conf, "basis": basis}
+        if penalty:
+            explanations["diversity"] = "overlaps a higher-ranked candidate"
+        comp = {"status": c.compliance_status, "reasons": c.compliance_reasons}
+        if crit and crit.get("rule_checks"):
+            verdicts = {str(r["rule_id"]): r for r in crit["rule_checks"]}
+            src = sources.get(c.source_id)
+            comp = compliance.evaluate(camp, "candidate", duration=c.end - c.start, transcript=c.transcript,
+                                       source=src, speakers=c.speakers, llm_rule_verdicts=verdicts)
+        ev = economics.expected_value(camp, rank_score, models.get(c.campaign_id)) if camp else {}
+        with db.session() as s:
+            row = s.get(Candidate, c.id)
+            assert row is not None
+            for k, v in final.items():
+                setattr(row, FACTOR_COLUMNS[k], v)
+            row.content_score = content
+            row.performance_prior = prior_score
+            row.diversity_penalty = penalty
+            row.rank_score = rank_score
+            row.scorer = scorer
+            row.confidence = conf
+            row.score_explanations = explanations
+            row.compliance_status = comp["status"]
+            row.compliance_reasons = comp["reasons"]
+            row.expected_value = ev
+            if crit:
+                row.hook = crit["hook_text"]
+                row.title = crit["title"]
+                row.hook_type = crit["hook_type"]
+                row.reason = crit["reason"]
+            if row.status == "new":
+                row.status = "ranked"
+    say(1.0, "ranked")
+    return [get(c.id) for c in cands]
+
+
+def set_agent_scores(candidate_id: int, scores: dict[str, float], notes: str | None = None,
+                     hook: str | None = None, title: str | None = None, hook_type: str | None = None,
+                     compliant: bool = True, compliance_notes: str | None = None) -> Candidate:
+    """Scores from an MCP agent. Stored per factor; ClipScout/ranking then apply
+    campaign weights, the performance prior and the diversity penalty."""
+    missing = [k for k in FACTORS if k not in scores]
+    if missing:
+        raise ValueError(f"missing factor scores: {missing}")
+    for k in FACTORS:
+        if not 0 <= float(scores[k]) <= 100:
+            raise ValueError(f"{k} must be 0-100")
+    if hook_type and hook_type not in heuristic.HOOK_TYPES:
+        raise ValueError(f"hook_type must be one of {heuristic.HOOK_TYPES}")
+    with db.session() as s:
+        c = s.get(Candidate, candidate_id)
+        if c is None:
+            raise LookupError(f"no candidate {candidate_id}")
+        ex = dict(c.score_explanations or {})
+        ex["agent_scores"] = {k: float(scores[k]) for k in FACTORS}
+        if notes:
+            ex["agent_notes"] = notes
+        c.score_explanations = ex
+        if hook:
+            c.hook = hook
+        if title:
+            c.title = title
+        if hook_type:
+            c.hook_type = hook_type
+        if notes:
+            c.reason = notes
+        if not compliant:
+            reasons = list(c.compliance_reasons or [])
+            reasons.append({"rule_id": None, "kind": "agent", "outcome": "review",
+                            "message": compliance_notes or "agent flagged a compliance concern", "stage": "candidate"})
+            c.compliance_reasons = reasons
+            if c.compliance_status == "PASS":
+                c.compliance_status = "REVIEW_REQUIRED"
+        if c.status == "discarded":
+            c.status = "ranked"
+    rank(candidate_ids=[candidate_id], use_model=False)
+    return get(candidate_id)
+
+
+def get(candidate_id: int) -> Candidate:
+    with db.session() as s:
+        c = s.get(Candidate, candidate_id)
+        if c is None:
+            raise LookupError(f"no candidate {candidate_id}")
+        return c
+
+
+def list_candidates(campaign: str | int | None = None, source_id: int | None = None, top: int | None = None,
+                    include_failed: bool = False, status: str | None = None) -> list[Candidate]:
+    with db.session() as s:
+        q = select(Candidate)
+        if campaign is not None:
+            q = q.where(Candidate.campaign_id == campaigns.get(campaign).id)
+        if source_id is not None:
+            q = q.where(Candidate.source_id == source_id)
+        if status:
+            q = q.where(Candidate.status == status)
+        items = list(s.scalars(q))
+    publishable = [c for c in items if c.compliance_status != "FAIL"]
+    failed = [c for c in items if c.compliance_status == "FAIL"]
+    key = lambda c: -(c.rank_score if c.rank_score is not None else (c.content_score or 0))  # noqa: E731
+    ordered = sorted(publishable, key=key) + (sorted(failed, key=key) if include_failed else [])
+    return ordered[:top] if top else ordered
+
+
+def discard(candidate_id: int) -> None:
+    with db.session() as s:
+        c = s.get(Candidate, candidate_id)
+        if c is None:
+            raise LookupError(f"no candidate {candidate_id}")
+        c.status = "discarded"
+
+
+def to_dict(c: Candidate, detail: bool = False) -> dict[str, Any]:
+    d: dict[str, Any] = {
+        "id": c.id, "campaign_id": c.campaign_id, "source_id": c.source_id, "start": c.start, "end": c.end,
+        "duration": round(c.end - c.start, 1), "title": c.title, "hook": c.hook, "hook_type": c.hook_type,
+        "topic": c.topic, "origin": c.origin, "status": c.status, "rank_score": c.rank_score,
+        "content_score": c.content_score, "confidence": c.confidence, "scorer": c.scorer,
+        "scores": {k: getattr(c, FACTOR_COLUMNS[k]) for k in FACTORS},
+        "performance_prior": c.performance_prior, "diversity_penalty": c.diversity_penalty,
+        "compliance": {"status": c.compliance_status, "reasons": c.compliance_reasons},
+        "expected_value": c.expected_value, "speakers": c.speakers, "reason": c.reason,
+    }
+    if detail:
+        d.update(transcript=c.transcript, context_before=c.context_before, context_after=c.context_after,
+                 explanations=c.score_explanations, features=c.features)
+        try:
+            words = [w for seg in load_segments(c.source_id) for w in seg.words if w.e > c.start and w.s < c.end]
+            d.update(edges(words))
+        except RuntimeError:
+            pass
+    return d

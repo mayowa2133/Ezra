@@ -24,8 +24,11 @@ __all__ = ["ensure_transcript", "latest", "load_words", "load_segments", "Word",
            "window", "window_text", "join_words", "edges", "page", "fmt_ts", "to_dict"]
 
 
+SEGMENTER_VERSION = "2"   # bump when resegment()/speaker assignment logic changes
+
+
 def _version(provider_version: str, diarizer: str) -> str:
-    return hashlib.sha256(f"{provider_version}|{diarizer}".encode()).hexdigest()[:16]
+    return hashlib.sha256(f"{provider_version}|{diarizer}|seg{SEGMENTER_VERSION}".encode()).hexdigest()[:16]
 
 
 def ensure_transcript(source_id: int, provider: str | None = None, diarizer: str | None = None,

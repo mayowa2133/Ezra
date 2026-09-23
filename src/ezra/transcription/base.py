@@ -99,8 +99,11 @@ def resegment(words: list[Word], max_span: float = 12.0, pause: float = 0.8) -> 
     segments: list[list[Word]] = []
     cur: list[Word] = []
     for w in words:
+        speaker_change = bool(w.spk and cur and cur[-1].spk and w.spk != cur[-1].spk)
+        # A speaker change splits only at a pause: diarization often mislabels the
+        # first or last word of a turn, and a split there cuts a sentence in half.
         if cur and (w.s - cur[-1].e > pause or w.e - cur[0].s > max_span
-                    or (w.spk and cur[-1].spk and w.spk != cur[-1].spk)):
+                    or (speaker_change and w.s - cur[-1].e > 0.3)):
             segments.append(cur)
             cur = []
         cur.append(w)
