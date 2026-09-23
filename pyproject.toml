@@ -29,7 +29,6 @@ dependencies = [
 
 [project.scripts]
 ezra = "ezra.cli:main"
-clipper = "clipper:main"
 
 [project.optional-dependencies]
 local = [

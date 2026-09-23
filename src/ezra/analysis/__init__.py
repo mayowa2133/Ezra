@@ -61,13 +61,13 @@ def detect_scenes(media: Path) -> dict[str, Any]:
     sm.add_detector(ContentDetector(threshold=27.0))
     sm.auto_downscale = True
     sm.detect_scenes(video, show_progress=False)
-    scenes = [{"start": round(a.get_seconds(), 3), "end": round(b.get_seconds(), 3)} for a, b in sm.get_scene_list()]
+    scenes = [{"start": round(a.seconds, 3), "end": round(b.seconds, 3)} for a, b in sm.get_scene_list()]
     fps = video.frame_rate or 25.0
     # visual activity: mean content change per second
     activity: list[float] = []
     try:
         vals = []
-        for frame in range(0, video.duration.get_frames() if video.duration else 0):
+        for frame in range(0, video.duration.frame_num if video.duration else 0):
             m = stats.get_metrics(frame, ["content_val"])
             vals.append(m[0] if m and m[0] is not None else 0.0)
         per = int(round(fps))
@@ -75,7 +75,7 @@ def detect_scenes(media: Path) -> dict[str, Any]:
     except Exception:  # stats are optional; scene cuts are the product
         activity = []
     if not scenes and video.duration:
-        scenes = [{"start": 0.0, "end": round(video.duration.get_seconds(), 3)}]
+        scenes = [{"start": 0.0, "end": round(video.duration.seconds, 3)}]
     return {"scenes": scenes, "activity_per_second": activity, "detector": "ContentDetector(27)"}
 
 

@@ -220,10 +220,11 @@ def candidates_cmd(campaign: Optional[str] = typer.Option(None, "--campaign", "-
             if not candidates.list_candidates(source_id=sid, include_failed=True):
                 run_job("find_candidates", {"source_id": sid, "campaign": campaign}, label=f"candidates {sid}")
         items = candidates.list_candidates(campaign, source_id, top, include_failed=all)
-    t = Table("id", "rank", "dur", "hook", "compliance", "EV/post", "p(qualify)", "title", expand=False)
-    t.columns[-1].overflow = "ellipsis"
-    t.columns[-1].no_wrap = True
-    t.columns[4].no_wrap = True
+    t = Table()
+    for name, width in (("id", 3), ("rank", 5), ("dur", 4), ("hook", 8), ("compliance", 10), ("EV/post", 7),
+                        ("p(qual)", 7)):
+        t.add_column(name, min_width=width, no_wrap=True)
+    t.add_column("title", max_width=38, no_wrap=True, overflow="ellipsis")
     for c in items:
         ev = c.expected_value or {}
         t.add_row(str(c.id), f"{c.rank_score:.1f}" if c.rank_score is not None else "-", f"{c.end - c.start:.0f}s",

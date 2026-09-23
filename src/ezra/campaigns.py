@@ -139,7 +139,7 @@ def _flatten(data: dict[str, Any]) -> dict[str, Any]:
     for alias, flat in _ALIASES.items():
         if alias in data and flat not in data:
             data[flat] = data.pop(alias)
-    # `required:` free-text list from the original clipper format
+    # `required:` free-text list (older campaign files)
     for item in data.pop("required", []) or []:
         low = str(item).lower()
         if "subtitle" in low or "caption" in low:

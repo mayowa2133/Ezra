@@ -8,7 +8,7 @@ Methods are deliberately simple and honest about uncertainty:
                factors, once n >= 15 (standardized coefficients)
   calibration  Spearman correlation between Ezra's rank score and views
   prior        a candidate's expected log-views from its traits' shrunken
-               cohort effects, as a 0-100 percentile with a confidence that
+               cohort effects, as a smooth 0-100 score (50 = typical) with a confidence that
                grows with data. Used by the PerformanceCritic.
 """
 
@@ -215,10 +215,14 @@ def prior(features: dict[str, Any], campaign_id: int | None = None) -> tuple[flo
             m, _ = _shrunk(vals, overall, var)
             effects.append(m - overall)
             used.append(f"{trait}={v} (n={len(vals)})")
-    pred = overall + (sum(effects) / len(effects) if effects else 0.0)
-    pct = float((np.array(logs) <= pred).mean() * 100)
+    shift = sum(effects) / len(effects) if effects else 0.0
+    # Smooth 0-100 score: 50 = typical, +/-1 sd of log-views -> ~88/12. (A rank
+    # percentile collapses on clustered results: every value between two clusters
+    # maps to the same number.)
+    sd = math.sqrt(var)
+    score = 50 + 50 * math.tanh(shift / sd) if sd > 0 else 50.0
     conf = round(min(0.8, len(obs) / 60), 2)
-    return round(pct, 1), conf, ", ".join(used) or "overall average"
+    return round(score, 1), conf, ", ".join(used) or "overall average"
 
 
 def learnings(active_only: bool = True) -> list[Learning]:

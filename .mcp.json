@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "clipper": {
+    "ezra": {
       "command": "uv",
-      "args": ["run", "clipper", "mcp"]
+      "args": ["run", "ezra", "mcp"]
     }
   }
 }

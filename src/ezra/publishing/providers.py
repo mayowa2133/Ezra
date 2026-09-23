@@ -151,8 +151,10 @@ class TikTokPublisher(Publisher):
         tok = self.token(account)
         auth = {"Authorization": f"Bearer {tok['access_token']}", "Content-Type": "application/json; charset=UTF-8"}
         size = req.video.stat().st_size
-        chunk = size if size < self.MIN_CHUNK else self.CHUNK
-        count = max(1, size // chunk) if size >= self.MIN_CHUNK else 1
+        # files under the chunk size go up as one chunk of exactly their size; otherwise
+        # fixed chunks with the remainder folded into the last one (API rule)
+        chunk = min(self.CHUNK, size)
+        count = max(1, size // chunk)
         privacy = "SELF_ONLY" if req.visibility != "public" or account.get("meta", {}).get("unaudited", True) \
             else "PUBLIC_TO_EVERYONE"
         init = self._check(self.http.post(f"{self.api}/post/publish/video/init/", headers=auth, json={
