@@ -81,12 +81,16 @@ def run_job(kind: str, payload: dict[str, Any], queue: bool = False, label: str 
     if queue:
         console.print(f"queued job {job.id} ({kind}); follow with `ezra jobs show {job.id}`")
         return jobs.as_dict(job)
-    claimed = jobs.claim(job.id)
-    done: dict[str, Any] = {}
-    if claimed is not None:
-        t = threading.Thread(target=lambda: done.setdefault("job", worker.run_isolated(claimed)
-                                                            if get_settings().job_isolation else jobs.run(claimed)))
+    def execute() -> threading.Thread | None:
+        claimed = jobs.claim(job.id)
+        if claimed is None:
+            return None
+        t = threading.Thread(target=lambda: worker.run_isolated(claimed)
+                             if get_settings().job_isolation else jobs.run(claimed))
         t.start()
+        return t
+
+    runner = execute()
     with Progress(TextColumn(f"[bold]{label or kind}[/]"), BarColumn(), TextColumn("{task.percentage:>3.0f}%"),
                   TextColumn("[dim]{task.description}"), TimeElapsedColumn(), console=console, transient=True) as bar:
         task = bar.add_task("", total=1.0)
@@ -95,6 +99,11 @@ def run_job(kind: str, payload: dict[str, Any], queue: bool = False, label: str 
             bar.update(task, completed=j.progress, description=(j.message or "")[:60])
             if j.status in ("completed", "failed", "cancelled"):
                 break
+            # a transient failure put it back in the queue: this process is its worker, so retry
+            # once the backoff has passed (otherwise nothing would ever pick it up)
+            if j.status == "queued" and (runner is None or not runner.is_alive()) \
+                    and (db.aware(j.run_after) or jobs.utcnow()) <= jobs.utcnow():
+                runner = execute()
             time.sleep(0.4)
     j = jobs.get(job.id)
     if j.status != "completed":

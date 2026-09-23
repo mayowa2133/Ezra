@@ -139,3 +139,41 @@ def test_migrations_match_the_models():
     with db.engine().connect() as conn:
         diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
     assert diff == [], diff
+
+
+def test_cli_inline_job_retries_itself_after_a_transient_failure():
+    from ezra import cli, jobs
+
+    calls = {"n": 0}
+
+    @jobs.task("flaky_inline")
+    def flaky(ctx):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient")
+        return {"ok": True}
+
+    out = cli.run_job("flaky_inline", {})          # used to wait forever on the requeued job
+    assert out == {"ok": True} and calls["n"] == 2
+
+
+def test_concurrent_first_access_migrates_once():
+    import threading
+
+    from ezra import campaigns, db
+
+    db._migrated.clear()
+    errors: list[BaseException] = []
+
+    def hit():
+        try:
+            campaigns.list_campaigns()
+        except BaseException as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=hit) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors

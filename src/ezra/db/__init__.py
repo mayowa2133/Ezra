@@ -19,6 +19,7 @@ from ..config import get_settings
 _engine: Engine | None = None
 _factory: sessionmaker[Session] | None = None
 _migrated: set[str] = set()
+_migrate_lock = threading.Lock()
 _lock = threading.Lock()
 
 
@@ -56,6 +57,13 @@ def migrate() -> None:
     url = get_settings().db_url
     if url in _migrated:
         return
+    with _migrate_lock:          # threads (API, MCP, parallel model calls) may all arrive first
+        if url in _migrated:
+            return
+        _migrate(url)
+
+
+def _migrate(url: str) -> None:
     import logging
 
     from alembic import command

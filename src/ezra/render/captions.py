@@ -23,7 +23,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from ..analysis.text import LEXICON, NUMBER
-from ..transcription.base import Word, join_words
+from ..transcription.base import Word, ends_sentence, join_words
 
 HEAVY_FONTS = [
     "/System/Library/Fonts/Supplemental/Arial Black.ttf",
@@ -105,7 +105,7 @@ def chunk_words(words: list[Word], per_chunk: int, max_span: float = 1.6) -> lis
     for w in words:
         cur = chunks[-1] if chunks else None
         if (cur is None or len(cur) >= per_chunk or w.s - cur[0].s > max_span or w.s - cur[-1].e > 0.6
-                or re.search(r"[.?!]$", cur[-1].w)):
+                or ends_sentence(cur[-1].w)):
             chunks.append([w])
         else:
             cur.append(w)

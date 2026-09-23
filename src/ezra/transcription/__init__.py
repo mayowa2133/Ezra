@@ -48,7 +48,7 @@ __all__ = [
 ]
 
 
-SEGMENTER_VERSION = "4"   # bump when token merging/resegment()/speaker assignment/diarizer clustering changes
+SEGMENTER_VERSION = "5"   # bump when token merging/resegment()/speaker assignment/diarizer clustering changes
 
 
 def _version(provider_version: str, diarizer: str) -> str:

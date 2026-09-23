@@ -14,6 +14,63 @@ from ..transcription.base import Segment, Word, ends_sentence, join_words
 CONNECTOR_START = {"so", "and", "but", "or", "because", "anyway", "also", "then", "plus", "which", "like"}
 DANGLING_START = {"he", "she", "they", "it", "that", "this", "those", "these", "him", "her", "them", "there"}
 FILLERS = {"um", "uh", "erm", "er", "hmm", "mm", "uhm", "ah"}
+# Sponsor / ad reads: clipping programmes pay for the creator's content, not their ads.
+AD_READ = re.compile(r"\b(sponsor(ed)?( by)?|brought to you by|promo code|use (my )?code|link (is )?in (the )?"
+                     r"description|scan the qr|qr code|download (the app|it (now|for free))|sign up|pre-?order|"
+                     r"buy the book|in stores|available (now|everywhere)|free trial|% off|percent off|"
+                     r"check (it|them) out|co-?authored|go to [a-z0-9]+ ?dot ?com|[a-z0-9]+\.com|"
+                     r"brand[- ]new (book|app|game|product|flavou?r|collection|merch|line)|merch|out now|"
+                     r"link below|(buy|get|grab|read|enjoy|love) (this|the|my) (book|app|product|merch))", re.I)
+
+
+_NOT_BRANDS = {"january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+               "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+               "sunday", "the", "this", "that", "and", "you", "your", "our", "so", "or", "if", "to", "i"}
+
+
+def sponsor_terms(segments: list[Any], regions: list[tuple[float, float]]) -> set[str]:
+    """Names mentioned inside ad segments ("Call of Duty Mobile", "James Patterson"):
+    integrated sponsors are woven through the video, so later mentions count as ad content."""
+    counts: dict[str, int] = {}
+    for sg in segments:
+        if not any(a <= sg.start <= b for a, b in regions) or not AD_READ.search(sg.text):
+            continue
+        words = re.findall(r"[A-Za-z][A-Za-z'-]*", sg.text)[1:]        # skip the sentence-initial capital
+        run: list[str] = []
+        for w in words + ["."]:
+            if (w[0].isupper() and len(w) > 2) or (run and w in ("of", "the")):
+                run.append(w)
+                continue
+            while run and run[-1] in ("of", "the"):
+                run.pop()
+            name = " ".join(run).lower()
+            if run and name not in _NOT_BRANDS and len(name) > 3:
+                counts[name] = counts.get(name, 0) + 1
+                caps = [i for i, x in enumerate(run) if x[0].isupper()]
+                if len(caps) >= 3:           # "Call of Duty Mobile" is also said as "Call of Duty"
+                    short = " ".join(run[:caps[1] + 1]).lower()
+                    counts[short] = counts.get(short, 0) + 1
+            run = []
+    # a one-word name needs repeating inside the ads: "Mr. Beast" leaves a stray "Beast"
+    return {t for t, n in counts.items() if " " in t or n >= 2}
+
+
+def ad_regions(segments: list[Any], gap: float = 30.0, min_hits: int = 2) -> list[tuple[float, float]]:
+    """Sponsor/ad segments of a source: runs of sentences with ad language no more than
+    `gap` seconds apart, holding at least `min_hits` ad phrases in total. A window is judged
+    against these, so an ad read that straddles the window's edge is still recognised."""
+    hits = [(sg.start, sg.end, len(AD_READ.findall(sg.text))) for sg in segments]
+    hits = [h for h in hits if h[2]]
+    regions: list[tuple[float, float]] = []
+    run: list[tuple[float, float, int]] = []
+    for h in hits + [(float("inf"), float("inf"), 0)]:
+        if run and h[0] - run[-1][1] > gap:
+            if sum(x[2] for x in run) >= min_hits:
+                regions.append((max(0.0, run[0][0] - 10.0), run[-1][1] + 10.0))   # the lead-in and the sign-off
+            run = []
+        if h[2]:
+            run.append(h)
+    return regions
 BACKREF = re.compile(r"\b(like i said|as i said|as we (discussed|said|mentioned)|earlier|going back to|"
                      r"you mentioned|we talked about|remember when)\b", re.I)
 CONTRARIAN = re.compile(r"\b(most people|nobody|no one|everyone thinks|disagree|actually|the truth is|"
@@ -51,9 +108,26 @@ def _first_words(text: str, n: int) -> list[str]:
     return re.findall(r"[a-z0-9$']+", text.lower())[:n]
 
 
+def _energy(loudness: dict[str, Any] | None, a: float, b: float) -> tuple[float | None, float | None]:
+    """(opening energy, peak energy): loudness above the source's median, in units of the
+    source's own spread (p90 - p10). Relative, because a brick-walled YouTube mix spans ~5 LU
+    where a podcast spans 15: +1 means "as far above typical as the loud tenth usually is"."""
+    if not loudness or loudness.get("median") is None:
+        return None, None
+    series, med = loudness["per_second"], float(loudness["median"])
+    spread = max(1.0, float(loudness.get("p90") or med) - float(loudness.get("p10") or med))
+    opening = series[int(a):int(a) + 3]
+    inside = sorted(series[int(a):int(b) + 1])
+    if not opening or not inside:
+        return None, None
+    peak = inside[int(0.9 * (len(inside) - 1))]
+    return round((sum(opening) / len(opening) - med) / spread, 2), round((peak - med) / spread, 2)
+
+
 def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
             face_timeline: list[Any] | None, scenes: list[dict[str, float]],
-            topics: list[dict[str, Any]], corpus_df: dict[str, int], n_docs: int) -> dict[str, Any]:
+            topics: list[dict[str, Any]], corpus_df: dict[str, int], n_docs: int,
+            loudness: dict[str, Any] | None = None) -> dict[str, Any]:
     text = win.text
     first = win.segments[0].text if win.segments else ""
     last = win.segments[-1].text if win.segments else ""
@@ -80,6 +154,7 @@ def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
     cuts = sum(1 for sc in scenes if win.start < sc["start"] < win.end)
     topic_ids = {i for i, tp in enumerate(topics) if tp["start"] < win.end and tp["end"] > win.start}
     speakers = sorted({w.spk for w in words if w.spk})
+    opening_energy, peak_energy = _energy(loudness, win.start, win.end)
     return {
         "duration": round(win.duration, 2), "n_words": n_words,
         "wpm": round(n_words / max(0.1, speech) * 60, 1) if speech else 0.0,
@@ -93,6 +168,8 @@ def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
         "first_is_question": first.rstrip().endswith("?"),
         "first_has_number": bool(NUMBER.search(first)),
         "first_lexicon": {k: v for k, v in em_first["counts"].items() if v},
+        "first_vocab": sorted(set(tokens(first))),
+        "opening_energy": opening_energy, "peak_energy": peak_energy,
         "first_intensity": em_first["intensity"],
         "intensity": em_all["intensity"], "lexicon": em_all["counts"], "numbers": em_all["numbers"],
         "questions": em_all["questions"], "exclamations": em_all["exclamations"], "laughter": em_all["laughter"],
@@ -101,7 +178,8 @@ def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
         "ends_on_question": last.rstrip().endswith("?"),
         "last_has_number": bool(NUMBER.search(last)),
         "payoff_shift": round(em_tail - em_head, 3),
-        "backrefs": len(BACKREF.findall(text)), "contrarian": len(CONTRARIAN.findall(text)),
+        "backrefs": len(BACKREF.findall(text)), "ad_read": len(AD_READ.findall(text)),
+        "contrarian": len(CONTRARIAN.findall(text)),
         "opinion": len(OPINION.findall(text)), "you_address": len(re.findall(r"\byou\b", text, re.I)),
         "rarity": round(rarity, 3), "fillers": sum(1 for w in words if w.w.lower().strip(",.") in FILLERS),
         "visual_activity": round(sum(sec) / len(sec), 2) if sec else 0.0,

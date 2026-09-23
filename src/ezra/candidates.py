@@ -24,7 +24,7 @@ from . import analytics as perf
 from .config import get_settings
 from .db.models import Campaign, Candidate, Clip
 from .scoring import heuristic
-from .scoring.features import Window, extract
+from .scoring.features import Window, ad_regions, extract, sponsor_terms
 from .transcription import edges, load_segments, snap
 from .transcription.base import Segment
 
@@ -46,6 +46,8 @@ def scout_windows(source_id: int, segments: list[Segment], topics: list[dict[str
     out: list[Window] = []
     seen: set[tuple[int, int]] = set()
     for i in range(len(segments)):
+        if i > 0 and not segments[i - 1].sentence_end:
+            continue            # a segment that continues a sentence (split at a pause or music hit)
         for target in targets:
             j = i
             while j < len(segments) and segments[j].end - segments[i].start < target:
@@ -98,6 +100,12 @@ def _questioner(segments: list[Segment]) -> str | None:
         return None
     top, n = max(asked.items(), key=lambda kv: kv[1])
     return top if n >= 3 and n >= 2 * (sum(asked.values()) - n) else None
+
+
+def _containment(a: tuple[float, float], b: tuple[float, float]) -> float:
+    inter = max(0.0, min(a[1], b[1]) - max(a[0], b[0]))
+    shorter = min(a[1] - a[0], b[1] - b[0])
+    return inter / shorter if shorter > 0 else 0.0
 
 
 def _iou(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -156,8 +164,11 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
     activity = rows["scenes"].data.get("activity_per_second", []) if "scenes" in rows else []
     silence = rows["silence"].data.get("regions", []) if "silence" in rows else []
     faces = rows["faces"].data.get("timeline") if "faces" in rows else None
+    loud = rows["loudness"].data if "loudness" in rows else None
     min_d, max_d = (camp.min_duration, camp.max_duration) if camp else (15.0, 60.0)
     windows = scout_windows(source_id, segments, topics, min_d, max_d)
+    ads = ad_regions(segments)
+    brands = sponsor_terms(segments, ads)
     from .analysis.text import tokens
 
     df: dict[str, int] = {}
@@ -168,7 +179,12 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
     cdict = _campaign_dict(camp)
     items = []
     for w in windows:
-        f = extract(w, silence, activity, faces, scenes, topics, df, len(segments))
+        f = extract(w, silence, activity, faces, scenes, topics, df, len(segments), loudness=loud)
+        in_ad = sum(max(0.0, min(w.end, b) - max(w.start, a)) for a, b in ads) / max(1e-6, w.end - w.start)
+        if in_ad > 0.3:          # mostly inside a sponsor segment, even if the window's own words are few
+            f["ad_read"] = max(int(f.get("ad_read", 0)), 2)
+        low = w.text.lower()
+        f["ad_read"] = int(f.get("ad_read", 0)) + sum(low.count(b) for b in brands)
         scores, why = heuristic.score(f, cdict)
         items.append({"window": w, "features": f, "scores": scores, "why": why,
                       "content": heuristic.content_score(scores, weights)})
@@ -232,7 +248,8 @@ def create_custom(source_id: int, start: float, end: float, title: str | None = 
                 rows["scenes"].data.get("activity_per_second", []) if "scenes" in rows else [],
                 rows["faces"].data.get("timeline") if "faces" in rows else None,
                 rows["scenes"].data.get("scenes", []) if "scenes" in rows else [],
-                rows["topics"].data["topics"] if "topics" in rows else [], {}, 1)
+                rows["topics"].data["topics"] if "topics" in rows else [], {}, 1,
+                loudness=rows["loudness"].data if "loudness" in rows else None)
     scores, why = heuristic.score(f, _campaign_dict(camp))
     weights = campaigns.normalized_weights(camp.weights if camp else None)
     comp = compliance.evaluate(camp, "candidate", duration=e0 - s0, transcript=win.text, source=src,
@@ -256,12 +273,26 @@ def create_custom(source_id: int, start: float, end: float, title: str | None = 
 
 # --- ranking ----------------------------------------------------------------------
 
-CRITIC_SYSTEM = """You are ClipCritic, a senior short-form editor judging podcast/interview moments for
-TikTok, Instagram Reels and YouTube Shorts on behalf of a performance-paid clipping campaign.
-Score each candidate on every factor 0-100 (50 = average clip a competent editor would post, 80+ = you
-would bet on it, 90+ is rare). Compare candidates against each other. Be concrete in `reason`: what the
-opening does, whether it stands alone, where the payoff lands. Scores are ranking estimates, not
-predictions. For each listed review rule, say whether the clip complies."""
+CRITIC_SYSTEM = """You are ClipCritic, a senior short-form editor choosing moments from long-form video
+(podcasts, interviews, challenge and competition videos, vlogs, streams) for TikTok, Instagram Reels and
+YouTube Shorts, on behalf of a campaign that is paid per qualified view.
+
+What high-performing clips share, and what you reward:
+- The first 1-2 seconds hook on their own: stakes, conflict, a bold claim, a question, a reveal, a
+  number. Openings that start mid-conversation ("Yeah, it's just...", "All right, Nolan...") or need
+  earlier context score low on hook and context.
+- One self-contained story: setup, escalation, payoff. The clip ends on the payoff (the reveal, the
+  win, the arrest, the punchline, the lesson), not on a transition or a new question.
+- Clear stakes a stranger understands without the episode (money, elimination, danger, a secret).
+- No sponsor reads or product plugs (programmes don't pay for ads): score them very low.
+
+Score each candidate on every factor 0-100 (50 = an average clip a competent editor would post,
+80+ = you would bet on it, 90+ is rare). Compare candidates against each other and use the full range.
+`hook_text` is the on-screen hook card: at most 8 punchy words that make a stranger stop scrolling
+(e.g. "He paid 100 cops to catch him"), not a quote of the first line. `title` is a specific
+YouTube-style title. Be concrete in `reason`: what the opening does, whether it stands alone, where
+the payoff lands. Scores are ranking estimates, not predictions. For each listed review rule, say
+whether the clip complies."""
 
 
 def _critic_schema(rule_ids: list[int]) -> dict[str, Any]:
@@ -281,11 +312,28 @@ def _critic_schema(rule_ids: list[int]) -> dict[str, Any]:
                                                                        "reason": {"type": "string"}}}}}}}}}
 
 
+CRITIC_BATCH = 8        # candidates per model call: small enough to answer in well under a minute
+CRITIC_PARALLEL = 3
+
+
 def critic_pass(cands: list[Candidate], camp: Campaign | None) -> dict[int, dict[str, Any]]:
-    """One model call over the shortlist; {} when no model is configured."""
+    """Model critique of the shortlist in parallel batches; {} when no model is configured.
+    A batch that fails (timeout, bad output) is skipped: those candidates keep heuristic scores."""
     provider = llm.get_llm()
     if not provider.available or not cands:
         return {}
+    from concurrent.futures import ThreadPoolExecutor
+
+    batches = [cands[i:i + CRITIC_BATCH] for i in range(0, len(cands), CRITIC_BATCH)]
+    learned = [x.text for x in perf.learnings()]          # read once, not from every thread
+    out: dict[int, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=CRITIC_PARALLEL) as pool:
+        for part in pool.map(lambda b: _critic_batch(b, camp, learned), batches):
+            out.update(part)
+    return out
+
+
+def _critic_batch(cands: list[Candidate], camp: Campaign | None, learned: list[str]) -> dict[int, dict[str, Any]]:
     review_rules = [r for r in (camp.rules if camp else []) if r.kind in ("forbidden_topic", "freeform")]
     lines = []
     if camp:
@@ -293,7 +341,6 @@ def critic_pass(cands: list[Candidate], camp: Campaign | None) -> dict[int, dict
                      f"{camp.max_duration:g}s. Platforms: {', '.join(camp.allowed_platforms)}.")
         if review_rules:
             lines.append("Review rules:\n" + "\n".join(f"  rule {r.id}: {r.description}" for r in review_rules))
-    learned = [x.text for x in perf.learnings()]
     if learned:
         lines.append("Learned from past performance:\n" + "\n".join(f"  - {t}" for t in learned[:10]))
     for c in cands:
@@ -304,7 +351,14 @@ def critic_pass(cands: list[Candidate], camp: Campaign | None) -> dict[int, dict
                        task="clip_critic", campaign_id=camp.id if camp else None, source_id=cands[0].source_id)
     except llm.LLMUnavailable:
         return {}
-    return {int(x["id"]): x | {"_provider": res.provider} for x in res.data.get("candidates", [])}
+    except llm.LLMError as e:
+        import logging
+
+        logging.getLogger("ezra.critic").warning("critic batch skipped (%s); heuristic scores kept", e)
+        return {}
+    wanted = {c.id for c in cands}
+    return {int(x["id"]): x | {"_provider": res.provider} for x in res.data.get("candidates", [])
+            if int(x["id"]) in wanted}
 
 
 def rank(source_id: int | None = None, campaign: str | int | None = None, candidate_ids: list[int] | None = None,
@@ -333,9 +387,9 @@ def rank(source_id: int | None = None, campaign: str | int | None = None, candid
                 say(0.2, f"model critique of {len(group)} candidates")
                 critique.update(critic_pass(group, camp))
     say(0.7, "ranking")
-    ordered = sorted(cands, key=lambda c: -(c.content_score or 0))
-    kept: list[tuple[float, float]] = []
-    for c in ordered:
+    # pass 1: each candidate's own score (agent > critic blend > heuristic, prior, ad penalty)
+    scored: list[dict[str, Any]] = []
+    for c in cands:
         camp = camps.get(c.campaign_id) if c.campaign_id else None
         weights = campaigns.normalized_weights(camp.weights if camp else None)
         heur = (c.score_explanations or {}).get("heuristic_scores") or {k: getattr(c, FACTOR_COLUMNS[k]) or 50
@@ -359,14 +413,30 @@ def rank(source_id: int | None = None, campaign: str | int | None = None, candid
                     opening=" ".join(re.findall(r"[a-z0-9$']+", (c.transcript or "").lower())[:2]))
         prior_score, prior_conf, basis = perf.prior(feat, c.campaign_id)
         alpha = 0.35 * prior_conf
-        span = (c.start, c.end)
-        penalty = 15.0 if any(_iou(span, k) > 0.4 for k in kept) else 0.0
-        if c.compliance_status != "FAIL":
-            kept.append(span)
-        rank_score = round((1 - alpha) * content + alpha * prior_score - penalty, 2)
+        ad = int((c.features or {}).get("ad_read", 0)) >= 2
         explanations["performance_prior"] = {"score": prior_score, "confidence": prior_conf, "basis": basis}
-        if penalty:
-            explanations["diversity"] = "overlaps a higher-ranked candidate"
+        if ad:
+            explanations["ad_read"] = "sponsor/ad read: programmes pay for the creator's content, not ads"
+        scored.append({"c": c, "camp": camp, "crit": crit, "final": final, "scorer": scorer, "conf": conf,
+                       "content": content, "prior": prior_score, "explanations": explanations,
+                       "base": (1 - alpha) * content + alpha * prior_score - (30.0 if ad else 0.0),
+                       "ad_penalty": 30.0 if ad else 0.0})
+
+    # pass 2: in final-score order, a later cut of an already-kept story is a duplicate. Overlap is
+    # measured against the shorter clip, so a 16 s cut inside a 34 s one counts even at low IoU.
+    kept: list[tuple[float, float]] = []
+    for item in sorted(scored, key=lambda x: -x["base"]):
+        c, camp, crit, final = item["c"], item["camp"], item["crit"], item["final"]
+        scorer, conf, content, prior_score = item["scorer"], item["conf"], item["content"], item["prior"]
+        explanations = item["explanations"]
+        span = (c.start, c.end)
+        dup = any(_containment(span, k) > 0.5 for k in kept)
+        penalty = item["ad_penalty"] + (15.0 if dup else 0.0)
+        if c.compliance_status != "FAIL" and not dup:
+            kept.append(span)
+        rank_score = round(item["base"] - (15.0 if dup else 0.0), 2)
+        if dup:
+            explanations["diversity"] = "overlaps a higher-ranked candidate (same story)"
         comp: dict[str, Any] = {"status": c.compliance_status, "reasons": c.compliance_reasons}
         if crit and crit.get("rule_checks"):
             verdicts = {str(r["rule_id"]): r for r in crit["rule_checks"]}

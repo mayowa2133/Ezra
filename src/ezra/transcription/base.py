@@ -108,8 +108,14 @@ def merge_split_tokens(words: list[Word]) -> list[Word]:
     return out
 
 
+# Titles and short forms whose period doesn't end a sentence ("Mr. Beast video", "vs. the cops")
+ABBREVIATIONS = {"mr.", "mrs.", "ms.", "dr.", "st.", "jr.", "sr.", "vs.", "etc.", "e.g.", "i.e.", "u.s.",
+                 "u.k.", "prof.", "gen.", "sgt.", "lt.", "capt.", "mt.", "no.", "approx."}
+
+
 def ends_sentence(word: str) -> bool:
-    return word.rstrip("\"')”’").endswith(SENTENCE_END)
+    w = word.rstrip("\"')”’")
+    return w.endswith(SENTENCE_END) and w.lower() not in ABBREVIATIONS
 
 
 def resegment(words: list[Word], max_span: float = 12.0, pause: float = 0.8) -> list[Segment]:

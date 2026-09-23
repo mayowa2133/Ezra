@@ -29,10 +29,20 @@ def is_filler(word: str) -> bool:
     return word.lower().strip(" ,.!?;:-") in FILLERS
 
 
+def _quiet_parts(a: float, b: float, quiet: list[tuple[float, float]] | None) -> list[tuple[float, float]]:
+    """The parts of the gap [a, b] where the audio is actually quiet. Without
+    silence data, the whole gap counts (fine for talk; wrong under music)."""
+    if quiet is None:
+        return [(a, b)]
+    return [(max(a, qa), min(b, qb)) for qa, qb in quiet if qb > a and qa < b]
+
+
 def build(words: list[Word], start: float, end: float, remove_silence: bool, silence_threshold: float,
-          remove_fillers: bool) -> tuple[list[Piece], dict[str, float]]:
-    """Keep ranges inside [start, end]. Long gaps between words shrink to
-    KEEP_PAUSE; filler words (and the gap around them) are cut."""
+          remove_fillers: bool, quiet: list[tuple[float, float]] | None = None) -> tuple[list[Piece], dict[str, float]]:
+    """Keep ranges inside [start, end]. Long *quiet* gaps between words shrink to
+    KEEP_PAUSE; filler words (and the gap around them) are cut. `quiet` is the
+    source's detected silence: a gap full of music, sound effects or action has
+    no words but isn't dead air, and must stay."""
     inside = [w for w in words if w.e > start and w.s < end]
     if not (remove_silence or remove_fillers) or not inside:
         return [Piece(start, end)], {"removed_silence": 0.0, "removed_fillers": 0, "removed_seconds": 0.0}
@@ -46,16 +56,19 @@ def build(words: list[Word], start: float, end: float, remove_silence: bool, sil
             cuts.append((max(prev_end, w.s - 0.02), min(nxt, w.e + 0.05)))
             removed_fillers += 1
             continue
-        gap = w.s - prev_end
-        if remove_silence and gap > silence_threshold:
+        if remove_silence and w.s - prev_end > silence_threshold:
             half = KEEP_PAUSE / 2
-            cuts.append((prev_end + half, w.s - half))
-            removed_silence += gap - KEEP_PAUSE
+            for qa, qb in _quiet_parts(prev_end, w.s, quiet):
+                if qb - qa > silence_threshold:
+                    cuts.append((qa + half, qb - half))
+                    removed_silence += qb - qa - KEEP_PAUSE
         prev_end = w.e
-    tail = end - prev_end
-    if remove_silence and tail > silence_threshold:
-        cuts.append((prev_end + KEEP_PAUSE, end))
-        removed_silence += tail - KEEP_PAUSE
+    if remove_silence and end - prev_end > silence_threshold:
+        for qa, qb in _quiet_parts(prev_end, end, quiet):
+            if qb - qa > silence_threshold:
+                lead = KEEP_PAUSE if qa <= prev_end + 1e-6 else KEEP_PAUSE / 2
+                cuts.append((qa + lead, qb if qb >= end - 1e-6 else qb - KEEP_PAUSE / 2))
+                removed_silence += qb - qa - KEEP_PAUSE
     pieces: list[Piece] = []
     cursor = start
     for a, b in sorted(cuts):

@@ -57,3 +57,63 @@ def test_spanning_topics_costs_retention_context_and_payoff():
     assert three["context"] < one["context"]
     assert three["payoff"] == 50 < one["payoff"]
     assert "later subject" in why3["payoff"]
+
+
+def test_ad_reads_are_recognised():
+    from ezra.scoring.features import AD_READ
+
+    ad = ("This is a brand new book that I co-authored. If you buy the book and enter, we give one person "
+          "$1 million. So scan the QR code on screen.")
+    assert len(AD_READ.findall(ad)) >= 2
+    assert len(AD_READ.findall("They caught Darius ten minutes in and he still wants the money.")) == 0
+    scores, why = heuristic.score(_features(ad_read=3), {"brief": "", "min_duration": 15, "max_duration": 60})
+    assert scores["campaign_fit"] <= 10 and "ad read" in why["campaign_fit"]
+
+
+def test_sponsor_segments_and_integrated_brand_mentions():
+    from ezra.scoring.features import ad_regions, sponsor_terms
+
+    segs = [seg(500, 504, "I've played a lot of Call of Duty in my day.", "S1"),
+            seg(505, 509, "We ran from the cops all night.", "S1"),
+            seg(540, 546, "Scan this QR code or click the link in the description to download Call of Duty Mobile.",
+                "S1"),
+            seg(600, 604, "If you've ever enjoyed a Mr. Beast video, you will love this.", "S1"),
+            seg(900, 905, "Darius got caught at the subway.", "S2")]
+    regions = ad_regions(segs)
+    assert len(regions) == 1 and regions[0][0] <= 540 <= regions[0][1] and regions[0][1] < 900
+    terms = sponsor_terms(segs, regions)
+    assert {"call of duty mobile", "call of duty"} <= terms and "beast" not in terms
+
+
+def test_windows_start_only_at_sentence_starts():
+    segs = [Segment(0, 3, "and if they arrest us by the end of", speaker="S1", sentence_end=False),
+            seg(5, 8, "their lures, but if we escape, they get nothing!", "S1"),
+            seg(8, 20, "Start the time and run as fast as you can through the whole city tonight.", "S1"),
+            seg(20, 30, "Everyone scattered in a different direction and the cops followed.", "S1")]
+    starts = {w.start for w in scout_windows(1, segs, [], 15, 60)}
+    assert 5 not in starts and 0 in starts
+
+
+def test_critic_runs_in_batches_and_survives_a_failed_batch(monkeypatch):
+    from types import SimpleNamespace
+
+    from ezra import candidates, llm
+
+    cands = [SimpleNamespace(id=i, start=float(i), end=i + 20.0, context_before="", transcript=f"clip {i}",
+                             source_id=1) for i in range(1, 20)]
+    seen: list[int] = []
+
+    def fake_call(system, prompt, schema, task, **kw):
+        ids = [c.id for c in cands if f"[id {c.id}]" in prompt]
+        seen.append(len(ids))
+        if 9 in ids:                                   # the second batch times out
+            raise llm.LLMError("claude timed out after 300s")
+        return llm.LLMResult({"candidates": [{"id": i, "scores": {}, "hook_text": "h", "title": "t",
+                                              "hook_type": "other", "reason": "r", "rule_checks": []}
+                                             for i in ids]}, "fake", None, 0.1, {})
+
+    monkeypatch.setattr(llm, "get_llm", lambda *a, **k: SimpleNamespace(available=True))
+    monkeypatch.setattr(llm, "call", fake_call)
+    out = candidates.critic_pass(cands, None)
+    assert sorted(seen) == [3, 8, 8]                   # 19 candidates -> batches of 8, 8, 3
+    assert set(out) == set(range(1, 9)) | set(range(17, 20))   # the failed batch keeps heuristic scores

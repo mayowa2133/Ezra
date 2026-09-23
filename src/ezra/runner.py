@@ -15,7 +15,20 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from . import analysis, analytics, audit, campaigns, candidates, db, metadata, publishing, render, review, sources
+from . import (
+    analysis,
+    analytics,
+    audit,
+    campaigns,
+    candidates,
+    db,
+    metadata,
+    publishing,
+    render,
+    review,
+    sources,
+    transcription,
+)
 from .db.models import Campaign
 
 Progress = Callable[[float, str], None]
@@ -37,9 +50,13 @@ def run_campaign(campaign: str | int, render_top: int = 5, max_candidates: int =
         def finding(f: float, m: str, b: float = base) -> None:
             say(b + (0.5 + f * 0.5) / n, m)
 
-        if src.status != "analyzed":
-            analysis.analyze_source(src.id, progress=analyzing)
-        if not candidates.list_candidates(camp.slug, src.id):
+        # resumable and cached by version: cheap when nothing changed, and it picks up a
+        # newer transcription/segmentation version instead of reusing a stale transcript
+        before = transcription.latest(src.id)
+        analysis.analyze_source(src.id, progress=analyzing)
+        after = transcription.latest(src.id)
+        stale = before is not None and after is not None and before.id != after.id
+        if stale or not candidates.list_candidates(camp.slug, src.id):
             candidates.find_candidates(src.id, camp.slug, max_candidates, progress=finding)
     say(0.72, "rendering the strongest candidates")
     clips = render.render_top(camp.slug, top=render_top, spec=spec,

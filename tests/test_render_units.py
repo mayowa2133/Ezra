@@ -123,14 +123,14 @@ def test_real_render_split_layout_with_captions(tmp_path):
 
     import sys
     comp = sys.modules["ezra.render.compose"]   # the package re-exports a function named `compose`
-    orig = comp.sample_faces
-    comp.sample_faces = lambda *a, **k: faces
+    orig = comp.sample_faces_and_motion
+    comp.sample_faces_and_motion = lambda *a, **k: (faces, [])
     try:
         spec = RenderSpec(layout="split", caption_theme="clean", remove_silence=False, remove_fillers=False,
                           hook_text="Hook card", thumbnail=False)
         res = compose(src, 0.0, 6.0, ws, [], spec, tmp_path / "out.mp4", lambda k: Path(k), detector=Fixed())
     finally:
-        comp.sample_faces = orig
+        comp.sample_faces_and_motion = orig
     info = probe(res.video)
     assert (info["width"], info["height"]) == (1080, 1920) and info["has_audio"]
     assert abs(info["duration"] - 6.0) < 0.2 and res.layout == "split"
@@ -173,3 +173,47 @@ def test_split_tokens_become_whole_words():
     money = merged[2]
     assert (money.s, money.e, money.p) == (.4, 1.0, .6)
     assert join_words(["billion", "-dollar", "outcomes", "-", "really"]) == "billion-dollar outcomes - really"
+
+
+def test_edl_keeps_wordless_action_and_only_cuts_real_silence():
+    from ezra.render import edl
+    from ezra.transcription.base import Word
+
+    words = [Word("Go!", 0.0, 0.4), Word("They", 6.0, 6.3), Word("escaped.", 6.3, 7.0),
+             Word("Then", 10.0, 10.3), Word("nothing.", 10.3, 11.0)]
+    # 0.4-6.0 is a chase under music (not quiet); 7.0-10.0 is real silence
+    pieces, summary = edl.build(words, 0.0, 11.0, True, 0.6, True, quiet=[(7.0, 10.0)])
+    kept = sum(p.length for p in pieces)
+    assert kept > 7.5                                  # the 5.6 s chase stays
+    assert 2.5 < summary["removed_seconds"] < 3.0      # only the silence (minus the kept pause) goes
+    # without silence data every long gap is treated as dead air (talk-only behaviour)
+    _, legacy = edl.build(words, 0.0, 11.0, True, 0.6, True)
+    assert legacy["removed_seconds"] > 8
+
+
+def test_abbreviations_do_not_end_sentences():
+    from ezra.transcription.base import Word, ends_sentence, resegment
+
+    assert not ends_sentence("Mr.") and not ends_sentence("vs.") and ends_sentence("done.")
+    segs = resegment([Word("a", 0, .2), Word("Mr.", .2, .5), Word("Beast", .5, .8), Word("video.", .8, 1.1)])
+    assert len(segs) == 1 and segs[0].text == "a Mr. Beast video."
+
+
+def test_faceless_scenes_follow_concentrated_motion_and_groups_follow_a_face():
+    from ezra.analysis.faces import Face
+    from ezra.render import layout
+
+    t = [i / 2 for i in range(20)]
+    runner = [(x, 0.8, 0.8) for x in t]                       # someone running on the right third
+    pan = [(x, 0.5, 0.3) for x in t]                          # motion everywhere: aerial pan / graphic
+    none: list = [(x, []) for x in t]
+    p = layout.plan(none, 10, [], "auto", "9:16", 2.0, motion=runner)
+    assert p[0].mode == "track" and abs(p[0].shots[0].x - 0.8) < 0.05
+    assert layout.plan(none, 10, [], "auto", "9:16", 2.0, motion=pan)[0].mode == "blur"   # long: show it all
+    short = layout.plan(none[:4], 2.0, [], "auto", "9:16", 2.0, motion=pan[:4])[0]
+    assert short.mode == "center" and short.shots[0].x == 0.5          # a fast cut fills the frame
+    group = [(x, [Face(0.2, .5, .08, .1), Face(0.5, .5, .15, .2), Face(0.8, .5, .08, .1)]) for x in t]
+    g = layout.plan(group, 10, [], "auto", "9:16", 2.0)
+    assert g[0].mode == "track" and abs(g[0].shots[0].x - 0.5) < 0.05     # the biggest (nearest) face
+    panel = [(x, [Face(0.2, .5, .1, .1), Face(0.5, .5, .1, .1), Face(0.8, .5, .1, .1)]) for x in t]
+    assert layout.plan(panel, 10, [], "auto", "9:16", 2.0)[0].mode == "blur"            # equals: show all

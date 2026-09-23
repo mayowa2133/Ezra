@@ -33,6 +33,8 @@ import httpx
 from . import costs, secrets
 from .config import get_settings
 
+CLI_TIMEOUT = 300   # seconds per structured call; the critic batches to stay well inside it
+
 
 class LLMUnavailable(RuntimeError):
     """The configured provider cannot run a model call (callers fall back)."""
@@ -103,7 +105,10 @@ class ClaudeCLIProvider(LLMProvider):
         if self.model:
             cmd += ["--model", self.model]
         t0 = time.time()
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=900, cwd=tempfile.gettempdir())
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=CLI_TIMEOUT, cwd=tempfile.gettempdir())
+        except subprocess.TimeoutExpired as e:
+            raise LLMError(f"claude timed out after {CLI_TIMEOUT}s") from e
         if out.returncode != 0:
             raise LLMError(f"claude exited {out.returncode}: {(out.stderr or out.stdout).strip()[-600:]}")
         payload = json.loads(out.stdout)
@@ -141,7 +146,11 @@ class CodexCLIProvider(LLMProvider):
             if self.model:
                 cmd += ["--model", self.model]
             t0 = time.time()
-            out = subprocess.run([*cmd, f"{system}\n\n{prompt}"], capture_output=True, text=True, timeout=900, cwd=tmp)
+            try:
+                out = subprocess.run([*cmd, f"{system}\n\n{prompt}"], capture_output=True, text=True,
+                                     timeout=CLI_TIMEOUT, cwd=tmp)
+            except subprocess.TimeoutExpired as e:
+                raise LLMError(f"codex timed out after {CLI_TIMEOUT}s") from e
             if out.returncode != 0 or not last.exists():
                 raise LLMError(f"codex exited {out.returncode}: {(out.stderr or out.stdout).strip()[-600:]}")
             data = json.loads(last.read_text())

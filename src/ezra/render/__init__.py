@@ -58,6 +58,24 @@ def _default_spec(cand: Candidate, overrides: dict[str, Any] | None) -> RenderSp
     return spec_from_brand(spec, brand, explicit=base.model_fields_set)
 
 
+def _record_render_compliance(cd: Candidate, check: dict[str, Any]) -> None:
+    """The rendered clip is what gets posted: if edits pushed it outside the campaign's
+    duration limits, the candidate fails (and can't be approved) until a re-render fixes it."""
+    kept = [r for r in (cd.compliance_reasons or []) if r.get("stage") != "render"]
+    reasons = kept + [dict(r, message=f"rendered clip: {r['message']}") for r in check["reasons"]]
+    outcomes = {r.get("outcome") for r in reasons}
+    cd.compliance_reasons = reasons
+    cd.compliance_status = "FAIL" if "fail" in outcomes else "REVIEW_REQUIRED" if "review" in outcomes else "PASS"
+
+
+def quiet_regions(source_id: int) -> list[tuple[float, float]] | None:
+    """Detected silence of the source, or None when it wasn't analysed."""
+    row = analysis.get(source_id, "silence")
+    if row is None:
+        return None
+    return [(float(r["start"]), float(r["end"])) for r in row.data.get("regions", [])]
+
+
 def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None = None,
                      progress: Progress | None = None) -> Clip:
     say = progress or (lambda f, m: None)
@@ -75,6 +93,7 @@ def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None
     words = load_words(cand.source_id)
     scenes = analysis.get(cand.source_id, "scenes")
     cuts = [sc["start"] for sc in (scenes.data.get("scenes", []) if scenes else [])][1:]
+    quiet = quiet_regions(cand.source_id)
     with db.session() as s:
         clip = s.scalar(select(Clip).where(Clip.candidate_id == candidate_id))
         if clip is None:
@@ -95,7 +114,7 @@ def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None
     t0 = time.time()
     try:
         result = compose(sources.local_path(src), cand.start, cand.end, words, cuts, rs, work / "clip.mp4",
-                         storage.local_path, progress=lambda f, m: say(f, m))
+                         storage.local_path, progress=lambda f, m: say(f, m), quiet=quiet)
     except Exception as e:
         with db.session() as s:
             v = s.get(ClipVersion, ver_id)
@@ -126,6 +145,8 @@ def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None
         cd = s.get(Candidate, candidate_id)
         if cd is not None and cd.status in ("new", "ranked"):
             cd.status = "rendered"
+        if cd is not None:
+            _record_render_compliance(cd, compliance.evaluate(camp, "render", duration=result.duration))
     costs.record("render", quantity=time.time() - t0, unit="seconds", campaign_id=cand.campaign_id,
                  source_id=cand.source_id, clip_id=clip_id, version=vnum, output_seconds=round(result.duration, 1))
     costs.record("storage", quantity=float(storage.size(str(keys["video_key"]))), unit="bytes",
@@ -138,7 +159,17 @@ def render_top(campaign: str | int | None = None, source_id: int | None = None, 
                spec: dict[str, Any] | None = None, progress: Progress | None = None) -> list[Clip]:
     """Render the best publishable, not-yet-rendered candidates."""
     pool = [c for c in candidates.list_candidates(campaign, source_id) if c.status in ("new", "ranked")]
-    chosen = pool[:top]
+    rendered = [(c.start, c.end, c.source_id) for c in candidates.list_candidates(campaign, source_id)
+                if c.status == "rendered"]
+    chosen: list[Any] = []
+    for c in pool:                   # never two cuts of the same story (one inside the other)
+        spans = rendered + [(x.start, x.end, x.source_id) for x in chosen]
+        if any(sid == c.source_id and candidates._containment((c.start, c.end), (a, b)) > 0.5
+               for a, b, sid in spans):
+            continue
+        chosen.append(c)
+        if len(chosen) >= top:
+            break
     out = []
     for i, c in enumerate(chosen):
         step: Progress | None = None

@@ -93,6 +93,27 @@ def detect_silence(media: Path, noise_db: int = -35, min_len: float = 0.5) -> di
             "total_silence": round(sum(r["end"] - r["start"] for r in regions), 2)}
 
 
+def detect_loudness(media: Path) -> dict[str, Any]:
+    """Per-second loudness (EBU R128 momentary, LUFS, loudest 400 ms block in each second).
+    Screams, crashes and crowd noise are where challenge content peaks, and a transcript
+    can't see them."""
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "verbose", "-i", str(media), "-vn", "-af",
+                          "ebur128=framelog=verbose", "-f", "null", "-"], capture_output=True, text=True)
+    per: dict[int, float] = {}
+    for t, m in re.findall(r"t:\s*([\d.]+)\s+TARGET:.*?M:\s*(-?[\d.]+|-inf)", out.stderr):
+        if m == "-inf":
+            continue
+        sec = int(float(t))
+        per[sec] = max(per.get(sec, -70.0), max(-70.0, float(m)))
+    n = max(per) + 1 if per else 0
+    series = [round(per.get(i, -70.0), 1) for i in range(n)]
+    voiced = sorted(v for v in series if v > -60)
+    if not voiced:
+        return {"per_second": series, "median": None, "p10": None, "p90": None}
+    q = lambda f: voiced[int(f * (len(voiced) - 1))]  # noqa: E731
+    return {"per_second": series, "median": q(0.5), "p10": q(0.1), "p90": q(0.9)}
+
+
 def summarize_faces(samples: list[tuple[float, list[Any]]], scenes: list[dict[str, Any]]) -> dict[str, Any]:
     """Per-scene face statistics and a layout hint (single, two_shot, group, none)."""
     per_scene = []
@@ -153,6 +174,10 @@ def analyze_source(source_id: int, progress: Progress | None = None, force: bool
             say(0.87, "finding silence")
             store(source_id, "silence", "ffmpeg-silencedetect", VERSION, None, detect_silence(media))
 
+        if "loudness" not in done and src.has_audio:
+            say(0.9, "measuring loudness")
+            store(source_id, "loudness", "ffmpeg-ebur128", VERSION, None, detect_loudness(media))
+
         say(0.92, "reading the transcript")
         full_text = " ".join(s.text for s in segments)
         topics = text.topic_segments(segments)
@@ -187,6 +212,8 @@ def summary_for(source_id: int) -> dict[str, Any]:
                          layouts=sorted({sc["layout_hint"] for sc in d.get("scenes", [])}))
         elif kind == "speakers":
             brief.update(n_speakers=d.get("n_speakers"), heuristic=d.get("heuristic"))
+        elif kind == "loudness":
+            brief["median_lufs"] = d.get("median")
         elif kind == "silence":
             brief.update(regions=len(d.get("regions", [])), total_silence=d.get("total_silence"))
         elif kind == "topics":

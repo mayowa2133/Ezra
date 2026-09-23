@@ -41,13 +41,23 @@ def hook_type(first_sentence: str, f: dict[str, Any]) -> str:
     return "other"
 
 
+def _brief_terms(campaign: dict[str, Any] | None) -> set[str]:
+    if not campaign:
+        return set()
+    brief = (campaign.get("brief") or "") + " " + (campaign.get("description") or "")
+    return set(re.findall(r"[a-z]{4,}", brief.lower())) - {"with", "that", "this", "from", "have", "your",
+                                                            "their", "they", "clips", "moments", "internal",
+                                                            "test", "nothing", "published", "quality"}
+
+
 def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[dict[str, float], dict[str, str]]:
     why: dict[str, str] = {}
 
     # hook: does the opening create a reason to keep watching?
     h = 45.0
     notes = []
-    stakes = sum(f["first_lexicon"].get(k, 0) for k in ("loss", "conflict", "confession", "surprise", "stakes"))
+    stakes = sum(f["first_lexicon"].get(k, 0) for k in ("loss", "conflict", "confession", "surprise", "stakes",
+                                                        "challenge", "danger"))
     if stakes:
         h += min(24, 9 * stakes)
         notes.append("stakes in the opening")
@@ -72,6 +82,14 @@ def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[di
     if f["starts_with_dangling"]:
         h -= 12
         notes.append("opens on an unresolved pronoun")
+    # campaign-aware: the brief says what this campaign's audience comes for
+    brief_hits = sorted(set(f.get("first_vocab", [])) & _brief_terms(campaign))
+    if brief_hits:
+        h += min(12, 6 * len(brief_hits))
+        notes.append(f"opens on the brief ({', '.join(brief_hits[:3])})")
+    if f.get("opening_energy") is not None and f["opening_energy"] > 0.3:
+        h += min(10, 15 * (f["opening_energy"] - 0.3))
+        notes.append("high-energy opening (louder than most of the source)")
     why["hook"] = ", ".join(notes) or "neutral opening"
     hook = clamp(h)
 
@@ -129,6 +147,9 @@ def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[di
     # emotion
     e = 30 + 70 * f["intensity"] + (6 if f["laughter"] else 0) + min(8, 3 * f["exclamations"])
     why["emotion"] = ", ".join(f"{k} words" for k, v in f["lexicon"].items() if v) or "flat"
+    if f.get("peak_energy") is not None and f["peak_energy"] > 0.4:
+        e += min(12, 20 * (f["peak_energy"] - 0.4))
+        why["emotion"] += "; loud peaks (shouting, crashes, crowd)"
     emotion = clamp(e)
 
     # novelty: contrarian framing and uncommon vocabulary for this source
@@ -185,6 +206,10 @@ def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[di
             fit -= 30
             notes.append("outside duration limits")
     why["campaign_fit"] = ", ".join(notes) or "neutral"
+    if f.get("ad_read", 0) >= 2:
+        fit = min(fit, 10.0)
+        notes.append(f"looks like a sponsor/ad read ({f['ad_read']} ad phrases): programmes don't pay for ads")
+    why["campaign_fit"] = ", ".join(notes) or why.get("campaign_fit", "neutral")
     campaign_fit = clamp(fit)
 
     scores = {"hook": hook, "retention": retention, "context": context, "emotion": emotion, "novelty": novelty,

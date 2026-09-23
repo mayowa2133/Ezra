@@ -91,7 +91,7 @@ def generate(clip_id: int, platforms: list[str] | None = None, use_model: bool =
                            campaign_id=c.campaign_id, source_id=c.source_id)
             meta = {p: res.data[p] for p in platforms}
             source = res.provider
-        except llm.LLMUnavailable:
+        except (llm.LLMUnavailable, llm.LLMError):   # no model, or it failed: template copy
             pass
     meta = enforce(meta, camp)
     checks = {p: compliance.evaluate(camp, "publish", copy_text=_copy_text(m), platforms=[p]) for p, m in meta.items()}

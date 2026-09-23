@@ -29,7 +29,7 @@ PROFANITY = {
 STAGES = {
     "candidate": {"duration", "profanity", "forbidden_words", "competitors", "source_rights", "speakers",
                   "forbidden_topic", "freeform"},
-    "render": {"subtitles", "logo"},
+    "render": {"subtitles", "logo", "duration"},   # duration again: edits change the length
     "publish": {"platforms", "hashtags", "mentions", "cta", "window", "posting_limits", "competitors",
                 "forbidden_words", "profanity"},
 }

@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from ..analysis.faces import FaceDetector, get_detector, sample_faces
+from ..analysis.faces import FaceDetector, get_detector, sample_faces_and_motion
 from ..transcription.base import Word
 from . import captions as cap
 from . import edl, layout
@@ -85,6 +85,7 @@ def audio_energy(src: Path, t0: float, t1: float, rate: int = 16000) -> tuple[li
     return [round(float(t), 4) for t in times], [float(x) for x in rms]
 
 
+LAYOUT_FPS = 4.0
 LOUDNESS = {"I": -14.0, "TP": -1.5, "LRA": 11.0}    # short-form platforms normalise to about -14 LUFS
 # Speech has peaks far above its average loudness; without taming them, reaching -14 LUFS would
 # break the true-peak ceiling and loudnorm falls back to a dynamic mode that lands 1-2 LU low.
@@ -143,7 +144,8 @@ def _png(img: Image.Image, path: Path) -> Path:
 
 def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_src: list[float],
             spec: RenderSpec, out: Path, storage_path: Callable[[str], Path],
-            detector: FaceDetector | None = None, progress: Progress | None = None) -> RenderResult:
+            detector: FaceDetector | None = None, progress: Progress | None = None,
+            quiet: list[tuple[float, float]] | None = None) -> RenderResult:
     say = progress or (lambda f, m: None)
     t0 = time.time()
     W, H = spec.size
@@ -156,7 +158,7 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         tdir = Path(tmp)
         # 1. edit decision list -------------------------------------------------------------
         pieces, summary = edl.build(words, start, end, spec.remove_silence, spec.silence_threshold,
-                                    spec.remove_fillers)
+                                    spec.remove_fillers, quiet)
         moved = 0
         if has_audio:
             times, energy = audio_energy(src, max(0.0, start - edl.SEARCH), end + edl.SEARCH)
@@ -180,9 +182,11 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         # 2. reframing plan ---------------------------------------------------------------
         say(0.15, "finding faces")
         need_faces = spec.layout in ("auto", "track", "split") and spec.crop_x is None and info["width"]
-        samples = sample_faces(media, 0 if edited else start, duration if edited else end, fps=2.0,
-                               detector=detector or get_detector()) if need_faces else []
-        plans = layout.plan(samples, duration, cuts, spec.layout, spec.aspect, 2.0, spec.crop_x) \
+        # 4 samples/s: fast-cut edits hold a shot for ~1-2 s, too short to find a face at 2/s
+        samples, motion = sample_faces_and_motion(media, 0 if edited else start, duration if edited else end,
+                                                  fps=LAYOUT_FPS, detector=detector or get_detector()) \
+            if need_faces else ([], [])
+        plans = layout.plan(samples, duration, cuts, spec.layout, spec.aspect, LAYOUT_FPS, spec.crop_x, motion) \
             if info["width"] else [layout.ScenePlan(0, duration, "blur")]
         modes = {p.mode for p in plans}
 

@@ -30,6 +30,7 @@ from .render import edl
 from .render.spec import BrollInsert
 from .storage import get_storage, sha256_file
 from .transcription import load_words
+from .transcription.base import ends_sentence
 
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 
@@ -191,12 +192,13 @@ def propose(candidate_id: int, max_inserts: int = 2, spec: dict[str, Any] | None
     words = [w for w in load_words(cand.source_id) if w.e > cand.start and w.s < cand.end]
     sp = spec or {}
     pieces, _ = edl.build(words, cand.start, cand.end, sp.get("remove_silence", True),
-                          sp.get("silence_threshold", 0.6), sp.get("remove_fillers", True))
+                          sp.get("silence_threshold", 0.6), sp.get("remove_fillers", True),
+                          render.quiet_regions(cand.source_id))
     out_words = edl.remap_words(words, pieces)
     sentences: list[list[Any]] = [[]]
     for w in out_words:
         sentences[-1].append(w)
-        if re.search(r"[.?!]$", w.w):
+        if ends_sentence(w.w):
             sentences.append([])
     proposals = []
     for sent in sentences:

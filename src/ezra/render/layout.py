@@ -80,8 +80,34 @@ def plan_shots(samples: list[tuple[float, list[Face]]], start: float, end: float
     return out
 
 
+def _dominant(inside: list[list[Face]], ratio: float = 1.3) -> bool:
+    """In most sampled frames, is the biggest face clearly bigger than the next one?"""
+    frames = [sorted((f.w for f in fs), reverse=True) for fs in inside if len(fs) >= 2]
+    if not frames:
+        return False
+    return median(1.0 if w[1] <= 0 else w[0] / w[1] for w in frames) >= ratio
+
+
+MOTION_SHARE = 0.55
+SHORT_SHOT = 2.5      # seconds    # a faceless scene is tracked when most of its motion sits in one crop-width band
+
+
+def _motion_samples(motion: list[tuple[float, float | None, float]] | None, a: float,
+                    b: float) -> list[tuple[float, list[Face]]] | None:
+    """A faceless scene's subject from its motion track, as pseudo-face samples, or None
+    when motion is diffuse (slides, graphics, aerial pans): then the whole frame is shown."""
+    if not motion:
+        return None
+    inside = [(t, x, share) for t, x, share in motion if a <= t < b]
+    moving = [(t, x) for t, x, share in inside if x is not None and share >= MOTION_SHARE]
+    if not inside or len(moving) < max(2, 0.5 * len(inside)):
+        return None
+    return [(t, [Face(float(x), 0.5, 0.1, 0.1)]) for t, x in moving]
+
+
 def plan(samples: list[tuple[float, list[Face]]], duration: float, scene_cuts: list[float], requested: str,
-         aspect: str, fps: float, crop_x: float | None = None) -> list[ScenePlan]:
+         aspect: str, fps: float, crop_x: float | None = None,
+         motion: list[tuple[float, float | None, float]] | None = None) -> list[ScenePlan]:
     bounds = [0.0] + sorted(c for c in scene_cuts if 0.3 < c < duration - 0.3) + [duration]
     vertical = aspect in ("9:16", "4:5")
     plans: list[ScenePlan] = []
@@ -100,22 +126,31 @@ def plan(samples: list[tuple[float, list[Face]]], duration: float, scene_cuts: l
             if right - left >= 0.25:
                 pair = (float(left), float(right))
                 pair_y = (float(median(f[0].cy for f in twos)), float(median(f[-1].cy for f in twos)))
+        moving = None
+        if requested == "auto" and n == 0 and vertical:
+            moving = _motion_samples(motion, a, b)
         if crop_x is not None and requested in ("auto", "track", "center", "static"):
             mode = "static"
         elif requested == "auto":
             if n == 0:
-                mode = "blur"
+                # fill the frame with the action when it's clear where it is; a short faceless shot
+                # (fast-cut edits compose on-centre) fills from the centre, so the clip doesn't flip
+                # between full-frame and letterboxed every second; long ones (graphics, text,
+                # establishing aerials) are shown whole
+                mode = "track" if moving else ("center" if vertical and b - a < SHORT_SHOT else "blur")
             elif n == 2 and pair and vertical:
                 mode = "split"
-            elif n >= 3:
-                mode = "blur"
+            elif n >= 3 and not _dominant(inside):
+                mode = "blur"      # a panel of equals: without knowing who talks, show everyone
             else:
+                # one face, or a group with someone nearest the camera: follow them, filling the
+                # frame the way strong vertical clips do
                 mode = "track"
         elif requested == "split" and not (pair and vertical):
             mode = "track"
         sp = ScenePlan(a, b, mode, faces=n, split_x=pair, split_y=pair_y, face_w=face_w)
         if mode == "track":
-            sp.shots = plan_shots(samples, a, b, fps)
+            sp.shots = plan_shots(moving or samples, a, b, fps)
         elif mode in ("static", "center"):
             sp.shots = [Shot(a, b, crop_x if crop_x is not None else 0.5)]
         plans.append(sp)

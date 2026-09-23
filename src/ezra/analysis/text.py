@@ -33,6 +33,13 @@ LEXICON: dict[str, set[str]] = {
     "stakes": {"million", "millions", "thousand", "billion", "everything", "life", "career", "company",
                "family", "money", "payroll", "revenue", "percent"},
     "superlative": {"best", "worst", "biggest", "hardest", "most", "only", "first", "last", "ever"},
+    # competition / challenge formats (challenge channels, game shows, survival videos)
+    "challenge": {"win", "wins", "won", "winner", "winning", "prize", "escape", "escaped", "caught", "catch",
+                  "arrested", "arrest", "eliminated", "elimination", "survive", "survived", "challenge",
+                  "compete", "competing", "hunt", "hunting", "chase", "trapped", "trap", "hide", "hiding",
+                  "found", "busted", "betray", "betrayed", "steal", "stole", "cash", "cops", "police"},
+    "danger": {"explode", "explosion", "exploded", "bomb", "detonator", "fire", "burning", "dangerous", "crash",
+               "crashed", "falling", "fell", "drown", "injured", "hurt", "emergency", "run", "running"},
 }
 LAUGH = re.compile(r"\b(ha(ha)+|lol|lmao)\b|\((laughs?|laughter|laughing)\)|\[(laughs?|laughter)\]", re.I)
 NUMBER = re.compile(r"(\$\s?\d[\d,.]*|\b\d[\d,.]*\s?(%|percent|k|m|million|thousand|billion)\b|\b\d{2,}\b)", re.I)

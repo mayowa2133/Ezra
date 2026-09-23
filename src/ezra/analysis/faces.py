@@ -34,6 +34,8 @@ class Face:
 
 
 Samples = list[tuple[float, list[Face]]]  # (t relative to range start, faces)
+Motion = list[tuple[float, float | None, float]]   # (t, motion centre x or None, share of motion near it)
+MOTION_WINDOW = 0.32   # crop width of a 9:16 cut from 16:9, as a fraction of source width
 
 
 class FaceDetector(ABC):
@@ -138,6 +140,31 @@ def sample_faces(media: Path, start: float, end: float, fps: float = 2.0,
                  detector: FaceDetector | None = None,
                  progress: Callable[[float], None] | None = None) -> Samples:
     """Decode [start, end] at `fps`, scaled to SAMPLE_WIDTH, and detect faces in each frame."""
+    return sample_faces_and_motion(media, start, end, fps, detector, progress)[0]
+
+
+def _motion(prev: np.ndarray | None, cur: np.ndarray) -> tuple[float | None, float]:
+    """Where between two frames things moved: (centre x of the motion, share of all motion
+    inside a crop-width window around it). None when the frame barely changed."""
+    if prev is None:
+        return None, 0.0
+    diff = np.abs(cur.astype(np.int16) - prev.astype(np.int16))
+    diff[diff < 12] = 0                                   # sensor noise, compression shimmer
+    cols = diff.sum(axis=0).astype(np.float64)
+    total = float(cols.sum())
+    if total / diff.size < 1.5:
+        return None, 0.0
+    x = np.arange(len(cols)) / max(1, len(cols) - 1)
+    cx = float((cols * x).sum() / total)
+    half = MOTION_WINDOW / 2
+    near = float(cols[(x >= cx - half) & (x <= cx + half)].sum() / total)
+    return cx, near
+
+
+def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 2.0,
+                            detector: FaceDetector | None = None,
+                            progress: Callable[[float], None] | None = None) -> tuple[Samples, Motion]:
+    """Faces per sampled frame, plus a motion track (what moved between samples), from one decode."""
     det = detector or get_detector()
     w, h = video_size(media)
     sh = max(2, int(round(SAMPLE_WIDTH * h / w / 2)) * 2)
@@ -149,6 +176,8 @@ def sample_faces(media: Path, start: float, end: float, fps: float = 2.0,
                              "-f", "rawvideo", "-"], stdout=subprocess.PIPE)
     assert proc.stdout is not None
     out: Samples = []
+    motion: Motion = []
+    prev_small: np.ndarray | None = None
     total = max(1, int((end - start) * fps))
     i = 0
     while True:
@@ -162,8 +191,12 @@ def sample_faces(media: Path, start: float, end: float, fps: float = 2.0,
         else:
             rgb, gray = None, arr.reshape(sh, SAMPLE_WIDTH)
         out.append((i / fps, det.detect(gray, rgb)))
+        small = gray[::8, ::8]
+        mx, share = _motion(prev_small, small)
+        motion.append((i / fps, mx, share))
+        prev_small = small
         i += 1
         if progress and i % 20 == 0:
             progress(min(i / total, 1.0))
     proc.wait()
-    return out
+    return out, motion
