@@ -258,3 +258,55 @@ def test_openshorts_moments_become_ranked_candidates(use_processed):
     assert c.compliance_status in ("PASS", "REVIEW_REQUIRED") and c.hook_score is not None
     words = transcription.load_words(1)
     assert any(abs(w.s - c.start) < 0.3 for w in words)          # snapped onto a word edge
+
+
+def test_scheduled_post_is_published_by_the_scheduler_when_due(use_processed):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from ezra import db
+    from ezra.db.models import Post
+    from ezra.publishing import scheduler
+
+    clip = render.render_candidate(candidates.list_candidates("demo", top=1)[0].id)
+    review.approve(clip.id, actor="test")
+    publishing.add_account("tiktok", "local-export", "me")
+    when = (datetime.now(UTC) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+    res = publishing.publish_clip(clip.id, ["tiktok"], schedule_at=when, tz="America/Toronto", confirm=True)
+    assert not res["problems"], res
+    post = publishing.get_post(res["post_ids"][0])
+    assert post.status == "scheduled" and post.timezone == "America/Toronto"
+    assert scheduler.tick()["queued_posts"] == []                     # not due yet
+    with db.session() as s:
+        s.execute(update(Post).where(Post.id == post.id).values(scheduled_at=datetime.now(UTC) - timedelta(minutes=1)))
+    assert scheduler.tick()["queued_posts"] == [post.id]
+    job = jobs.claim()
+    assert job is not None and job.kind == "publish_post"
+    jobs.run(job)
+    assert publishing.get_post(post.id).status == "published"
+
+
+def test_broll_textcard_inserts_rerender_the_clip(use_processed):
+    from ezra import broll
+
+    clip = render.render_candidate(candidates.list_candidates("demo", top=1)[0].id)
+    before = render.current_version(clip)
+    clip = broll.attach(clip.id, "textcard", max_inserts=1)
+    v = render.current_version(clip)
+    assert v.version == before.version + 1 and len(v.spec["broll"]) == 1
+    assert v.spec["broll"][0]["asset_key"].startswith("broll/textcard/")
+    assert (v.width, v.height) == (1080, 1920) and abs(v.duration - before.duration) < 0.2
+    st = _streams(Path(os.environ["EZRA_HOME"]) / "storage" / v.video_key)
+    assert abs(st["video"] - st["audio"]) < 0.12
+
+
+def test_live_session_clips_a_replayed_stream(use_processed):
+    from ezra import live
+
+    src = live.make_source("file", use_processed["video"], speed=20)
+    out = live.run_session("demo", src, chunk_seconds=30, window_seconds=60, max_seconds=60)
+    assert out["windows"] >= 2 and out["seconds"] >= 60
+    got = [candidates.get(i) for i in out["candidates"]]
+    assert got and all(c.origin == "live" and c.origin_ref.startswith(out["session"]) for c in got)
+    assert all(c.compliance_status in ("PASS", "REVIEW_REQUIRED", "FAIL") for c in got)

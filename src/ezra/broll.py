@@ -146,8 +146,10 @@ class TextCardProvider(BrollProvider):
                 lines[-1] = trial
             else:
                 lines.append(w)
+        # upper third: captions sit on the lower safe zone, or on the seam at mid-frame in split layouts
         for i, ln in enumerate(lines):
-            d.text((W / 2, H / 2 + (i - (len(lines) - 1) / 2) * 130), ln, font=font, anchor="mm", fill=(255, 212, 0))
+            d.text((W / 2, H * 0.3 + (i - (len(lines) - 1) / 2) * 130), ln, font=font, anchor="mm",
+                   fill=(255, 212, 0))
         with tempfile.TemporaryDirectory() as tmp:
             png, mp4 = Path(tmp) / "card.png", Path(tmp) / "card.mp4"
             img.save(png)
@@ -164,6 +166,21 @@ def get_provider(name: str) -> BrollProvider:
     if name not in PROVIDERS:
         raise ValueError(f"unknown B-roll provider {name!r}; available: {sorted(PROVIDERS)}")
     return PROVIDERS[name]()
+
+
+FILLER_WORDS = {"honestly", "really", "actually", "basically", "literally", "probably", "something", "anything",
+                "everyone", "everything", "nobody", "because", "about", "there", "their", "which", "would",
+                "could", "should", "think", "those", "these", "where", "right"}
+
+
+def headline(text: str) -> str:
+    """A text card's words: a number with its unit ("$2 million", "40% of our revenue" -> "40% OF
+    OUR"), else up to three content words in the order spoken."""
+    m = re.search(r"\$?\d[\d,.]*%?(?:\s+(?:million|billion|thousand|percent|days|years|months|people))?", text)
+    if m:
+        return m.group(0).strip(" ,.")
+    words = [w for w in re.findall(r"[A-Za-z']+", text) if len(w) > 4 and w.lower() not in FILLER_WORDS]
+    return " ".join(list(dict.fromkeys(words))[:3]) or text.split()[0]
 
 
 def propose(candidate_id: int, max_inserts: int = 2, spec: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -192,7 +209,8 @@ def propose(candidate_id: int, max_inserts: int = 2, spec: dict[str, Any] | None
         query = " ".join(dict.fromkeys(t for t in tokens(text) if len(t) > 4))[:60] or concrete[0]
         span = sent[-1].e - sent[0].s
         proposals.append({"at": round(sent[0].s + 0.2, 2), "duration": round(min(3.0, max(1.5, span)), 2),
-                          "query": query, "reason": f"illustrates: {text[:80]}", "score": len(concrete)})
+                          "query": query, "headline": headline(text), "reason": f"illustrates: {text[:80]}",
+                          "score": len(concrete)})
     proposals.sort(key=lambda p: -p["score"])
     chosen: list[dict[str, Any]] = []
     for p in proposals:
@@ -210,7 +228,8 @@ def attach(clip_id: int, provider: str = "textcard", max_inserts: int = 2) -> An
     current = render.current_version(clip)
     inserts = []
     for p in propose(clip.candidate_id, max_inserts, current.spec if current else None):
-        found = prov.search(p["query"], limit=1)
+        # generated cards show a headline; stock/library search uses the keyword query
+        found = prov.search(p["headline"] if provider == "textcard" else p["query"], limit=1)
         if not found:
             continue
         key = prov.fetch(found[0])
