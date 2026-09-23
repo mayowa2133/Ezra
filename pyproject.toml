@@ -7,13 +7,24 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "alembic>=1.20.0",
+    "boto3>=1.43.100",
+    "cryptography>=50.0.1",
+    "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "mcp>=1.2",
+    "numpy>=2.4.6",
     "pillow>=12.3.0",
+    "psycopg[binary]>=3.3.6",
     "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
+    "scipy>=1.17.1",
+    "sqlalchemy>=2.0",
     "typer>=0.27.2",
+    "uvicorn[standard]>=0.53.0",
 ]
 
 [project.scripts]
@@ -23,6 +34,10 @@ clipper = "clipper:main"
 local = [
     "faster-whisper>=1.2.1",
     "opencv-python-headless>=4.8,<5",
+    "scenedetect[opencv-headless]>=0.7",
+]
+mediapipe = [
+    "mediapipe>=0.10",
 ]
 
 [build-system]
@@ -31,6 +46,11 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "boto3-stubs[s3]>=1.43.100",
+    "moto>=5.2.3",
+    "mypy>=2.3.1",
     "pytest>=9.1.1",
+    "ruff>=0.16.8",
     "scikit-image>=0.26.0",
+    "types-pyyaml>=6.0.12.20260906",
 ]
