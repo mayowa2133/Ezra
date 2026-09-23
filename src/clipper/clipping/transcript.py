@@ -101,6 +101,26 @@ def join_words(tokens: list[str]) -> str:
     return out
 
 
+def resegment(words: list[dict[str, Any]], max_span: float = 12.0, pause: float = 0.8) -> list[dict[str, Any]]:
+    """Sentence-sized segments from word timings. Agents read one timestamp per
+    segment, and batched ASR returns ~30s segments, so without this a transcript
+    page would carry a timestamp only every half minute."""
+    segments: list[dict[str, Any]] = []
+    cur: list[dict[str, Any]] = []
+    for w in words:
+        if cur and (w["s"] - cur[-1]["e"] > pause or w["e"] - cur[0]["s"] > max_span):
+            segments.append(cur)
+            cur = []
+        cur.append(w)
+        if w["w"].rstrip("\"')”’").endswith((".", "?", "!")):
+            segments.append(cur)
+            cur = []
+    if cur:
+        segments.append(cur)
+    return [{"start": seg[0]["s"], "end": seg[-1]["e"], "text": join_words([w["w"] for w in seg]),
+             "words": seg} for seg in segments]
+
+
 def window_text(t: Transcript, start: float, end: float) -> str:
     return join_words([w.w for w in t.words if w.e > start and w.s < end])
 

@@ -14,6 +14,7 @@ class Settings:
     whisper_model: str
     whisper_device: str
     whisper_compute: str
+    whisper_batch: int
     font_path: str | None
     upload_post_api_key: str | None
     upload_post_user: str | None
@@ -58,6 +59,7 @@ def settings() -> Settings:
         whisper_model=os.environ.get("CLIPPER_WHISPER_MODEL", "small"),
         whisper_device=os.environ.get("CLIPPER_WHISPER_DEVICE", "auto"),
         whisper_compute=os.environ.get("CLIPPER_WHISPER_COMPUTE", "int8"),
+        whisper_batch=int(os.environ.get("CLIPPER_WHISPER_BATCH", "8")),
         font_path=os.environ.get("CLIPPER_FONT"),
         upload_post_api_key=os.environ.get("UPLOAD_POST_API_KEY"),
         upload_post_user=os.environ.get("UPLOAD_POST_USER"),

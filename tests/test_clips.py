@@ -121,3 +121,14 @@ def test_edges_flag_mid_sentence_endings(campaign):
         Candidate(start=0, end=17.4, title="complete sentence")])
     assert short["ends_with"].endswith("product market") and short["warnings"]
     assert full["ends_with"].endswith("market fit.") and full["warnings"] == []
+
+
+def test_resegment_splits_long_asr_segments_into_sentences():
+    from clipper.clipping.transcript import resegment
+    words = [{"w": w, "s": i * 0.4, "e": i * 0.4 + 0.3} for i, w in enumerate(
+        "I lost it all. Then I rebuilt it slowly".split())]
+    segs = resegment(words)
+    assert [s["text"] for s in segs] == ["I lost it all.", "Then I rebuilt it slowly"]
+    assert segs[1]["start"] == words[4]["s"]
+    gap = [{"w": "one", "s": 0, "e": 0.3}, {"w": "two", "s": 2.0, "e": 2.3}]
+    assert len(resegment(gap)) == 2  # a long pause also breaks a segment
