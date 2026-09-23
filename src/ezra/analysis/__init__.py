@@ -53,8 +53,11 @@ def all_for(source_id: int) -> dict[str, SourceAnalysis]:
 # --- individual analyzers ------------------------------------------------------
 
 def detect_scenes(media: Path) -> dict[str, Any]:
+    import logging
+
     from scenedetect import ContentDetector, SceneManager, StatsManager, open_video
 
+    logging.getLogger("pyscenedetect").setLevel(logging.ERROR)   # it (re)configures its own INFO logger on import
     video = open_video(str(media))
     stats = StatsManager()
     sm = SceneManager(stats_manager=stats)

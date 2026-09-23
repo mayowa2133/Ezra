@@ -62,6 +62,11 @@ for name, sub in (("campaign", campaign_app), ("source", source_app), ("clip", c
 console = Console()
 
 
+def _clip_text(text: str, n: int) -> str:
+    """At most n characters, cut on a word boundary."""
+    return text if len(text) <= n else text[:n].rsplit(" ", 1)[0] + "…"
+
+
 def fail(msg: str) -> None:
     console.print(f"[red]error:[/] {msg}")
     raise typer.Exit(1)
@@ -691,7 +696,7 @@ def run(campaign: str, top: int = 5, max_candidates: int = 40,
             t.add_row(str(c["clip_id"]), f"{cand.get('rank_score') or 0:.1f}", f"{c['duration'] or 0:.0f}s",
                       str(c["layout"]), c["compliance"]["status"],
                       "-" if ev.get("ev_per_post") is None else f"${ev['ev_per_post']:,.2f}",
-                      f"\"{(cand.get('opens_with') or cand.get('transcript') or '')[:60]}\"")
+                      f"\"{_clip_text(cand.get('opens_with') or cand.get('transcript') or '', 60)}\"")
         console.print(t)
     if "autonomous" in out:
         console.print(f"autonomous: {out['autonomous']}")

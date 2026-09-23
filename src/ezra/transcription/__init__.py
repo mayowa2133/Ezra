@@ -15,7 +15,19 @@ from sqlalchemy import select
 
 from .. import costs, db, sources
 from ..db.models import Transcript, TranscriptSegment
-from .base import Progress, Segment, TranscriptResult, Word, edges, join_words, resegment, snap, window, window_text
+from .base import (
+    Progress,
+    Segment,
+    TranscriptResult,
+    Word,
+    edges,
+    join_words,
+    merge_split_tokens,
+    resegment,
+    snap,
+    window,
+    window_text,
+)
 from .providers import get_provider
 
 __all__ = [
@@ -36,7 +48,7 @@ __all__ = [
 ]
 
 
-SEGMENTER_VERSION = "3"   # bump when resegment()/speaker assignment/diarizer clustering changes
+SEGMENTER_VERSION = "4"   # bump when token merging/resegment()/speaker assignment/diarizer clustering changes
 
 
 def _version(provider_version: str, diarizer: str) -> str:
@@ -62,10 +74,10 @@ def ensure_transcript(source_id: int, provider: str | None = None, diarizer: str
     t0 = time.time()
     result: TranscriptResult = tp.transcribe(media, (lambda f: progress(0.8 * f)) if progress else None)
     t_asr = time.time() - t0
-    words = result.words
+    words = merge_split_tokens(result.words)
     diar = dz.diarize(media, words)
     assign_speakers(words, diar.turns)
-    segments = resegment(words) if diar.turns else result.segments
+    segments = resegment(words)
     if progress:
         progress(0.95)
     with db.session() as s:

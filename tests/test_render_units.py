@@ -160,3 +160,16 @@ def test_refine_boundaries_moves_cuts_to_the_quiet_gap():
     quiet = [5.0] * len(times)
     same, n = edl.refine_boundaries(pieces, words, times, quiet)
     assert n == 0 and same[0].src_start == 9.95
+
+
+def test_split_tokens_become_whole_words():
+    from ezra.transcription.base import Word, join_words, merge_split_tokens
+
+    toks = [Word("I", 0, .1, .9), Word("lost", .1, .4, .9), Word("$400", .4, .8, .8), Word(",000", .8, 1.0, .6),
+            Word("and", 1.1, 1.2), Word("my", 1.2, 1.3), Word("co", 1.3, 1.5, .9), Word("-founder", 1.5, 1.9, .7),
+            Word("-", 2.0, 2.1), Word("40", 2.2, 2.4), Word("%", 2.4, 2.5)]
+    merged = merge_split_tokens(toks)
+    assert [w.w for w in merged] == ["I", "lost", "$400,000", "and", "my", "co-founder", "-", "40%"]
+    money = merged[2]
+    assert (money.s, money.e, money.p) == (.4, 1.0, .6)
+    assert join_words(["billion", "-dollar", "outcomes", "-", "really"]) == "billion-dollar outcomes - really"

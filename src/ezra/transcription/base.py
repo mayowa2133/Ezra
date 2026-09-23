@@ -75,16 +75,36 @@ GLUE = ",.!?;:%)'’"
 SENTENCE_END = (".", "?", "!")
 
 
+def glues(prev: str, tok: str) -> bool:
+    """Is `tok` a piece Whisper split off the previous token ("$400" ",000", "40" "%",
+    "co" "-founder", "billion" "-dollar")? A lone "-" is a dash, not a join."""
+    if not prev or not tok:
+        return False
+    return tok[0] in GLUE or (tok[0] == "-" and len(tok) > 1 and prev[-1].isalnum())
+
+
 def join_words(tokens: list[str]) -> str:
-    """Join ASR tokens, gluing pieces Whisper splits off ("$400" ",000", "40" "%")."""
+    """Join ASR tokens into text, gluing split-off pieces."""
     out = ""
     for tok in (t.strip() for t in tokens):
         if not tok:
             continue
-        if out and (tok[0] in GLUE or (tok[0] == "-" and out[-1].isdigit())):
-            out += tok
-        else:
-            out += (" " if out else "") + tok
+        out += tok if glues(out, tok) else (" " if out else "") + tok
+    return out
+
+
+def merge_split_tokens(words: list[Word]) -> list[Word]:
+    """One Word per written word: captions draw words one by one, so "$400" ",000"
+    would otherwise burn in as "$400 ,000"."""
+    out: list[Word] = []
+    for w in words:
+        tok = w.w.strip()
+        if out and glues(out[-1].w, tok):
+            prev = out[-1]
+            probs = [x for x in (prev.p, w.p) if x is not None]
+            out[-1] = Word(prev.w + tok, prev.s, max(prev.e, w.e), min(probs) if probs else None, prev.spk)
+        elif tok:
+            out.append(Word(tok, w.s, w.e, w.p, w.spk))
     return out
 
 
