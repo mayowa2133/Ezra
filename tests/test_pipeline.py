@@ -7,7 +7,7 @@ from clipper.ranking.scoring import ClipScore
 
 
 class FakeUploader:
-    def upload(self, video, platforms, copy, scheduled_date=None, timezone=None):
+    def upload(self, video, platforms, copy, scheduled_date=None, timezone=None, private=False):
         return {"success": True, "results": {p: {"success": True, "url": f"https://{p}.test/1", "post_id": p}
                                              for p in platforms}}
 

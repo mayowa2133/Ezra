@@ -206,13 +206,16 @@ def set_clip_copy(clip_id: int, copy: dict[str, PlatformCopy]) -> dict[str, Any]
 
 @server.tool()
 def publish_clip(clip_id: int, platforms: list[str], confirm: bool = False,
-                 scheduled_date: str | None = None, timezone: str | None = None) -> dict[str, Any]:
+                 scheduled_date: str | None = None, timezone: str | None = None,
+                 private: bool = False) -> dict[str, Any]:
     """Post an approved clip via Upload-Post. Without confirm=true this is a dry run that
-    shows exactly what would be posted. Only set confirm=true after the human says yes."""
+    shows exactly what would be posted. Only set confirm=true after the human says yes.
+    private=true posts visible only to the owner (TikTok, YouTube; Instagram can't) to
+    test the connection; private posts don't count toward revenue or insights."""
     from .publishing import publisher
 
     return publisher.publish(clip_id, platforms, confirm=confirm,
-                             scheduled_date=scheduled_date, timezone=timezone)
+                             scheduled_date=scheduled_date, timezone=timezone, private=private)
 
 
 # --- performance loop ----------------------------------------------------
@@ -220,9 +223,9 @@ def publish_clip(clip_id: int, platforms: list[str], confirm: bool = False,
 @server.tool()
 def list_posts(campaign: str | None = None) -> list[dict[str, Any]]:
     """Published posts with their latest views/likes/comments/shares."""
-    return [{k: p[k] for k in ("id", "clip_id", "clip_title", "platform", "status", "post_url",
-                               "posted_at", "views", "likes", "comments", "shares", "saves",
-                               "actual_payout")} for p in revenue.posts_with_latest(campaign)]
+    return [{k: p[k] for k in ("id", "clip_id", "clip_title", "platform", "status", "visibility",
+                               "post_url", "posted_at", "views", "likes", "comments", "shares", "saves",
+                               "actual_payout")} for p in revenue.posts_with_latest(campaign, include_private=True)]
 
 
 @server.tool()

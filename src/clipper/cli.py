@@ -184,37 +184,49 @@ def copy(campaign: str, agent: Optional[str] = None, platforms: Optional[str] = 
 @app.command()
 def publish(campaign: str, platforms: Optional[str] = None, clip: list[int] = typer.Option(None),
             schedule: Optional[str] = typer.Option(None, help="ISO datetime"),
-            timezone: Optional[str] = None, dry_run: bool = False, yes: bool = False) -> None:
+            timezone: Optional[str] = None, dry_run: bool = False, yes: bool = False,
+            private: bool = typer.Option(False, "--private", help="Visible only to you (TikTok, YouTube): "
+                                         "test the connection without reaching an audience")) -> None:
     """Post approved clips via Upload-Post (asks for confirmation)."""
     from .publishing import publisher
 
     spec = campaigns.spec(campaign)
     plats = [p.strip() for p in platforms.split(",")] if platforms else spec.platforms
+    if private and not platforms:
+        skipped = [p for p in plats if p not in publisher.PRIVATE_PLATFORMS]
+        plats = [p for p in plats if p in publisher.PRIVATE_PLATFORMS]
+        if skipped:
+            console.print(f"[dim]private test: skipping {', '.join(skipped)} (no private posts there)[/]")
     ids = clip or [c["id"] for c in clips.list_clips(campaign, "approved")]
     if not ids:
         _fail("no approved clips")
     for cid in ids:
-        pre = publisher.publish(cid, plats, dry_run=True)
+        pre = publisher.publish(cid, plats, dry_run=True, private=private)
         if pre.get("problems"):
             console.print(f"[red]clip {cid} blocked:[/] {'; '.join(pre['problems'])}")
             continue
-        console.print(f"clip {cid} → {', '.join(plats)}: {Path(pre['video']).name}")
+        console.print(f"clip {cid} → {', '.join(plats)} ({pre['visibility']}): {Path(pre['video']).name}")
         if dry_run:
             continue
         if not yes and console.input("Publish? [y/N] ").strip().lower() not in ("y", "yes"):
             continue
-        res = publisher.publish(cid, plats, confirm=True, scheduled_date=schedule, timezone=timezone)
+        res = publisher.publish(cid, plats, confirm=True, scheduled_date=schedule, timezone=timezone,
+                                private=private)
         for p in res.get("posts", []):
-            console.print(f"  {'✗' if p['status'] == 'failed' else '✓'} {p['platform']} {p['status']} {p.get('url') or ''}")
+            console.print(f"  {'✗' if p['status'] == 'failed' else '✓'} {p['platform']} {p['status']} "
+                          f"({p['visibility']}) {p.get('url') or ''}")
+        if private:
+            console.print("  [dim]private test: not counted in revenue or insights; the clip stays "
+                          "approved for a real publish[/]")
 
 
 @app.command()
-def posts(campaign: Optional[str] = None) -> None:
+def posts(campaign: Optional[str] = typer.Argument(None, help="Limit to one campaign")) -> None:
     """Published posts and their latest numbers."""
-    t = Table("post", "clip", "platform", "status", "views", "likes", "url")
-    for p in revenue.posts_with_latest(campaign):
-        t.add_row(str(p["id"]), str(p["clip_id"]), p["platform"], p["status"], f"{p['views']:,}",
-                  str(p["likes"] or "-"), p["post_url"] or "")
+    t = Table("post", "clip", "platform", "status", "visibility", "views", "likes", "url")
+    for p in revenue.posts_with_latest(campaign, include_private=True):
+        t.add_row(str(p["id"]), str(p["clip_id"]), p["platform"], p["status"], p["visibility"],
+                  f"{p['views']:,}", str(p["likes"] or "-"), p["post_url"] or "")
     console.print(t)
 
 

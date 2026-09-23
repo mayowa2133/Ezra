@@ -115,7 +115,8 @@ Step by step, if you want control:
 | `clipper render <clip_id>... [--framing blur --crop-x 0.3]` | Re-render; the crop follows the speaker unless you pin `--crop-x` |
 | `clipper review <campaign>` | Approve or reject rendered clips |
 | `clipper copy <campaign>` | Agent writes platform copy for approved clips |
-| `clipper publish <campaign> [--dry-run --schedule 2026-10-01T18:00]` | Post approved clips (asks first) |
+| `clipper publish <campaign> [--dry-run --private --schedule 2026-10-01T18:00]` | Post approved clips (asks first); `--private` posts visible only to you on TikTok/YouTube to test the connection |
+| `clipper posts [campaign]` | Every post with status, visibility and latest numbers |
 | `clipper metrics sync` / `clipper metrics add <post_id> <views> --payout 42` | Pull or record performance |
 | `clipper report <campaign>` | Views, qualified views, estimated vs actual revenue |
 | `clipper insights [--explain]` | What's working; `--explain` has the agent save learnings |
@@ -143,6 +144,14 @@ When an OpenShorts moment wins, `--framing openshorts` reuses its render. Start 
 Publishing uses [Upload-Post](https://upload-post.com): one API for TikTok, Instagram and YouTube. The free plan
 allows 10 uploads a month, and TikTok needs a paid tier. Separately, TikTok keeps posts from unaudited API
 clients private until the app passes review.
+
+Setup: create an account, generate an API key in account settings, create a profile under **User Management**
+at app.upload-post.com, connect your accounts to it (Instagram must be a Business or Creator account), then set
+`UPLOAD_POST_API_KEY` and `UPLOAD_POST_USER` (the profile's username) in `.env`.
+
+Test before going public: `clipper publish <campaign> --private` posts visible only to you on TikTok and YouTube
+(Instagram has no private posts, so it's skipped). Private posts stay out of revenue and insights, and the clip
+stays approved for the real publish.
 
 ## Development
 

@@ -33,7 +33,10 @@ class UploadPost:
 
     def upload(self, video: Path, platforms: list[str], copy: dict[str, dict[str, Any]],
                scheduled_date: str | None = None, timezone: str | None = None,
-               tiktok_privacy: str = "PUBLIC_TO_EVERYONE") -> dict[str, Any]:
+               private: bool = False) -> dict[str, Any]:
+        """private: TikTok 'only me' and YouTube 'private', for testing the pipeline
+        without reaching an audience. Instagram has no private posts; callers must
+        not send it with private=True (publisher.preflight enforces that)."""
         def pick(platform: str, *keys: str) -> str | None:
             entry = copy.get(platform) or {}
             return next((entry[k] for k in keys if entry.get(k)), None)
@@ -44,7 +47,7 @@ class UploadPost:
                                 "async_upload": "true"}
         if "tiktok" in platforms:
             data["tiktok_title"] = pick("tiktok", "caption", "title") or title
-            data["privacy_level"] = tiktok_privacy
+            data["privacy_level"] = "SELF_ONLY" if private else "PUBLIC_TO_EVERYONE"
             data["post_mode"] = "DIRECT_POST"
         if "instagram" in platforms:
             data["instagram_title"] = pick("instagram", "caption", "title") or title
@@ -52,7 +55,7 @@ class UploadPost:
         if "youtube" in platforms:
             data["youtube_title"] = (pick("youtube", "title") or title)[:100]
             data["youtube_description"] = pick("youtube", "description", "caption") or ""
-            data["privacyStatus"] = "public"
+            data["privacyStatus"] = "private" if private else "public"
         if scheduled_date:
             data["scheduled_date"] = scheduled_date
             if timezone:

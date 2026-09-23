@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS posts (
     post_url        TEXT,
     request_id      TEXT,
     status          TEXT NOT NULL DEFAULT 'submitted',
+    visibility      TEXT NOT NULL DEFAULT 'public',
     caption         TEXT,
     actual_payout   REAL,
     response_json   TEXT,
@@ -116,6 +117,19 @@ CREATE INDEX IF NOT EXISTS idx_metrics_post ON metrics(post_id, captured_at);
 """
 
 
+# Columns added after a table first shipped: (table, column, definition).
+MIGRATIONS = [
+    ("posts", "visibility", "TEXT NOT NULL DEFAULT 'public'"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, definition in MIGRATIONS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -130,6 +144,7 @@ def connect() -> Iterator[sqlite3.Connection]:
     conn.execute("PRAGMA journal_mode = WAL")
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         yield conn
         conn.commit()
     finally:

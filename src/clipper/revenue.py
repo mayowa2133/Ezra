@@ -28,16 +28,23 @@ def estimate(views: int, spec: CampaignSpec) -> dict[str, float]:
     return {"qualified_views": qualified, "estimated": round(est, 2)}
 
 
-def posts_with_latest(campaign_ref: str | int | None = None) -> list[dict[str, Any]]:
+def posts_with_latest(campaign_ref: str | int | None = None,
+                      include_private: bool = False) -> list[dict[str, Any]]:
+    """Posts with their latest metrics. Private test posts are left out unless asked
+    for: they earn nothing and would drag every average toward zero."""
     sql = ("SELECT p.*, c.campaign_id, c.title AS clip_title, c.ai_score, c.hook_type, "
            "c.opening_words, c.start_time, c.end_time, c.topic FROM posts p "
            "JOIN clips c ON c.id = p.clip_id")
-    args: tuple = ()
+    where, args = [], []
     if campaign_ref is not None:
-        sql += " WHERE c.campaign_id = ?"
-        args = (campaigns.get(campaign_ref)["id"],)
+        where.append("c.campaign_id = ?")
+        args.append(campaigns.get(campaign_ref)["id"])
+    if not include_private:
+        where.append("p.visibility = 'public'")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     with db.connect() as conn:
-        out = db.rows(conn.execute(sql + " ORDER BY p.id", args))
+        out = db.rows(conn.execute(sql + " ORDER BY p.id", tuple(args)))
         for p in out:
             m = conn.execute(LATEST_METRIC, (p["id"],)).fetchone()
             p["views"] = m["views"] if m else 0

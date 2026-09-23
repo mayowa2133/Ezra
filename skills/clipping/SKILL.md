@@ -37,8 +37,9 @@ publishes and does the revenue math. Every judgment is yours; every irreversible
 8. `set_clip_copy` for each approved clip and each campaign platform. Include the required
    hashtags. Repeat until `issues` is empty. Show the user the copy.
 9. `publish_clip(..., confirm=false)` shows exactly what would go out. Only after the user says yes,
-   call it again with `confirm=true`. TikTok via Upload-Post needs a paid tier, and unaudited TikTok
-   apps post privately; say so if TikTok is in the list.
+   call it again with `confirm=true`. For a first test of a new Upload-Post setup, offer
+   `private=true` (TikTok/YouTube only; Instagram has no private posts). TikTok via Upload-Post
+   needs a paid tier, and unaudited TikTok apps post privately; say so if TikTok is in the list.
 
 ## Learn from results
 

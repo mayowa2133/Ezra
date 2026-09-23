@@ -15,7 +15,10 @@ from ..integrations.uploadpost import UploadPost, UploadPostError, metric_values
 from ..ranking import compliance
 
 
-def preflight(clip_id: int, platforms: list[str]) -> list[str]:
+PRIVATE_PLATFORMS = {"tiktok", "youtube"}
+
+
+def preflight(clip_id: int, platforms: list[str], private: bool = False) -> list[str]:
     clip = clips.get(clip_id)
     spec = campaigns.spec(clip["campaign_id"])
     problems = []
@@ -25,6 +28,11 @@ def preflight(clip_id: int, platforms: list[str]) -> list[str]:
         problems.append(f"clip {clip_id} has no rendered video")
     copy = db.loads(clip["copy_json"], {})
     problems += compliance.check_copy(spec, copy, platforms)
+    if private:
+        public_only = sorted(set(platforms) - PRIVATE_PLATFORMS)
+        if public_only:
+            problems.append(f"{', '.join(public_only)} can't post privately (the API has no private "
+                            f"posts); leave it out of a private test or post publicly")
     return problems
 
 
@@ -35,18 +43,22 @@ def _client() -> UploadPost:
 
 def publish(clip_id: int, platforms: list[str], confirm: bool = False, dry_run: bool = False,
             scheduled_date: str | None = None, timezone: str | None = None,
-            client: UploadPost | None = None) -> dict[str, Any]:
-    problems = preflight(clip_id, platforms)
+            client: UploadPost | None = None, private: bool = False) -> dict[str, Any]:
+    """private=True posts visible only to you (TikTok, YouTube): a live test of the
+    connection. Private posts are excluded from revenue and insights, and the clip
+    stays 'approved' so it can still be published for real."""
+    problems = preflight(clip_id, platforms, private)
     if problems:
         return {"clip_id": clip_id, "published": False, "problems": problems}
     clip = clips.get(clip_id)
     copy = db.loads(clip["copy_json"], {})
     if dry_run or not confirm:
         return {"clip_id": clip_id, "published": False, "dry_run": True, "platforms": platforms,
-                "video": clip["video_path"], "copy": copy,
+                "visibility": "private" if private else "public", "video": clip["video_path"], "copy": copy,
                 "note": "pass confirm=True to post" if not dry_run else "dry run"}
     up = client or _client()
-    payload = up.upload(Path(clip["video_path"]), platforms, copy, scheduled_date, timezone)
+    payload = up.upload(Path(clip["video_path"]), platforms, copy, scheduled_date, timezone, private=private)
+    visibility = "private" if private else "public"
     results = platform_results(payload)
     request_id = payload.get("request_id") or payload.get("job_id")
     posts = []
@@ -61,22 +73,23 @@ def publish(clip_id: int, platforms: list[str], confirm: bool = False, dry_run: 
                 status = "scheduled" if scheduled_date else "submitted"
             caption = compliance.copy_text(copy, platform)
             cur = conn.execute(
-                "INSERT INTO posts (clip_id, platform, post_id, post_url, request_id, status, caption, "
-                "response_json, posted_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO posts (clip_id, platform, post_id, post_url, request_id, status, visibility, "
+                "caption, response_json, posted_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (clip_id, platform, str(r.get("post_id") or r.get("publish_id") or "") or None,
-                 r.get("url"), request_id, status, caption, db.dumps(r or payload),
+                 r.get("url"), request_id, status, visibility, caption, db.dumps(r or payload),
                  scheduled_date or db.now()))
             posts.append({"post_id": cur.lastrowid, "platform": platform, "status": status,
-                          "url": r.get("url"), "error": r.get("error")})
-    if any(p["status"] != "failed" for p in posts):
+                          "visibility": visibility, "url": r.get("url"), "error": r.get("error")})
+    if not private and any(p["status"] != "failed" for p in posts):
         clips.update(clip_id, status="published")
-    return {"clip_id": clip_id, "published": True, "request_id": request_id, "posts": posts}
+    return {"clip_id": clip_id, "published": True, "visibility": visibility,
+            "request_id": request_id, "posts": posts}
 
 
 def list_posts(campaign_ref: str | int | None = None) -> list[dict[str, Any]]:
     from ..revenue import posts_with_latest
 
-    return posts_with_latest(campaign_ref)
+    return posts_with_latest(campaign_ref, include_private=True)
 
 
 def refresh_status(client: UploadPost | None = None) -> list[dict[str, Any]]:
