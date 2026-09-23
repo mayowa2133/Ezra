@@ -1,0 +1,1094 @@
+{
+  "started": "2026-09-23T00:02:44-04:00",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "python": "3.11.6",
+    "cpu_count": 10
+  },
+  "fixtures": {
+    "solo": {
+      "fixture": "solo",
+      "duration": 182.154,
+      "tts": "say",
+      "whisper_model": "small",
+      "diarizer": "local",
+      "face_detector": "haar",
+      "timing": {
+        "analyze_s": 31.5,
+        "candidates_s": 0.1,
+        "render_top_s": 23.2,
+        "analyze_realtime_factor": 0.173
+      },
+      "transcript": {
+        "wer": 0.0076,
+        "ref_words": 528,
+        "hyp_words": 528,
+        "substitutions": 4,
+        "deletions": 0,
+        "insertions": 0,
+        "turn_onset_error_median": 0.062,
+        "turn_onset_error_p90": 0.137,
+        "turn_offset_error_median": 0.201,
+        "turn_offset_error_p90": 0.295,
+        "fillers_in_script": 4,
+        "fillers_transcribed": 3
+      },
+      "diarization": {
+        "word_accuracy": 1.0,
+        "words": 518,
+        "speakers_true": 1,
+        "speakers_found": 1,
+        "mapping": {
+          "S1": "guest"
+        }
+      },
+      "scenes": {
+        "true_cuts": 0,
+        "found_cuts": 0,
+        "hits": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_cuts": 0
+      },
+      "faces": {
+        "samples": 182,
+        "recall": 1.0,
+        "precision": 1.0,
+        "false_positives": 0,
+        "layout_hints": [
+          "single"
+        ]
+      },
+      "candidates": {
+        "count": 15,
+        "clean_start_rate": 1.0,
+        "clean_end_rate": 1.0,
+        "ends_on_question_rate": 0.0,
+        "duration_in_bounds_rate": 1.0,
+        "compliance": {
+          "PASS": 15
+        },
+        "strong_recall_at_5": 0.5,
+        "strong_found_at_5": [
+          "almost quit, resignation letter",
+          "most startups should never raise venture money",
+          "raised too early, it made us lazy"
+        ],
+        "top1_opens_on_strong_moment": true,
+        "top_5_ranks_containing_dull_material": [],
+        "mean_pairwise_iou_top_5": 0.094,
+        "top": [
+          {
+            "rank_score": 75.69,
+            "hook_type": "number",
+            "start": 107.1,
+            "duration": 26.6,
+            "opens": "We raised $2 million before we had a single paying customer, and it made"
+          },
+          {
+            "rank_score": 72.57,
+            "hook_type": "loss",
+            "start": 1.9,
+            "duration": 35.0,
+            "opens": "Today my guest built a company, lost almost everything, and came back. So, um,"
+          },
+          {
+            "rank_score": 70.77,
+            "hook_type": "contrarian",
+            "start": 124.6,
+            "duration": 23.5,
+            "opens": "I think most startups should never raise venture money. Honestly, the best companies I"
+          },
+          {
+            "rank_score": 69.53,
+            "hook_type": "number",
+            "start": 76.85,
+            "duration": 51.0,
+            "opens": "My co-founder read it, tore it in half, and said give me 90 days."
+          },
+          {
+            "rank_score": 66.55,
+            "hook_type": "loss",
+            "start": 71.73,
+            "duration": 22.5,
+            "opens": "I almost quit the company in 2021. I had my resignation letter written. My"
+          }
+        ]
+      },
+      "renders": [
+        {
+          "clip_id": 1,
+          "layout": "track",
+          "duration": 25.55,
+          "render_seconds": 7.5,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.015,
+          "loudness_lufs": -14.1,
+          "true_peak_dbtp": -4.3,
+          "captions": 15,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": -0.023,
+          "removed_seconds": 1.2,
+          "leading_blip": false,
+          "boundaries_refined": 3,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": 1.0,
+          "split_center_error": null,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        },
+        {
+          "clip_id": 2,
+          "layout": "track",
+          "duration": 32.91,
+          "render_seconds": 8.9,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.008,
+          "loudness_lufs": -14.2,
+          "true_peak_dbtp": -4.4,
+          "captions": 20,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": 0.132,
+          "removed_seconds": 2.1,
+          "leading_blip": false,
+          "boundaries_refined": 4,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": 1.0,
+          "split_center_error": null,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        },
+        {
+          "clip_id": 3,
+          "layout": "track",
+          "duration": 22.05,
+          "render_seconds": 6.8,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.013,
+          "loudness_lufs": -14.1,
+          "true_peak_dbtp": -4.3,
+          "captions": 14,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": -0.051,
+          "removed_seconds": 1.67,
+          "leading_blip": false,
+          "boundaries_refined": 5,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": 1.0,
+          "split_center_error": null,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        }
+      ]
+    },
+    "podcast": {
+      "fixture": "podcast",
+      "duration": 179.001,
+      "tts": "say",
+      "whisper_model": "small",
+      "diarizer": "local",
+      "face_detector": "haar",
+      "timing": {
+        "analyze_s": 30.9,
+        "candidates_s": 0.1,
+        "render_top_s": 27.3,
+        "analyze_realtime_factor": 0.172
+      },
+      "transcript": {
+        "wer": 0.0095,
+        "ref_words": 528,
+        "hyp_words": 528,
+        "substitutions": 5,
+        "deletions": 0,
+        "insertions": 0,
+        "turn_onset_error_median": 0.085,
+        "turn_onset_error_p90": 0.136,
+        "turn_offset_error_median": 0.18,
+        "turn_offset_error_p90": 0.276,
+        "fillers_in_script": 4,
+        "fillers_transcribed": 4
+      },
+      "diarization": {
+        "word_accuracy": 0.9787,
+        "words": 517,
+        "speakers_true": 2,
+        "speakers_found": 2,
+        "mapping": {
+          "S1": "host",
+          "S2": "guest"
+        }
+      },
+      "scenes": {
+        "true_cuts": 0,
+        "found_cuts": 0,
+        "hits": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_cuts": 0
+      },
+      "faces": {
+        "samples": 179,
+        "recall": 1.0,
+        "precision": 1.0,
+        "false_positives": 0,
+        "layout_hints": [
+          "two_shot"
+        ]
+      },
+      "candidates": {
+        "count": 16,
+        "clean_start_rate": 1.0,
+        "clean_end_rate": 1.0,
+        "ends_on_question_rate": 0.0,
+        "duration_in_bounds_rate": 1.0,
+        "compliance": {
+          "PASS": 16
+        },
+        "strong_recall_at_5": 0.5,
+        "strong_found_at_5": [
+          "almost quit, resignation letter",
+          "most startups should never raise venture money",
+          "raised too early, it made us lazy"
+        ],
+        "top1_opens_on_strong_moment": true,
+        "top_5_ranks_containing_dull_material": [],
+        "mean_pairwise_iou_top_5": 0.083,
+        "top": [
+          {
+            "rank_score": 74.29,
+            "hook_type": "contrarian",
+            "start": 122.71,
+            "duration": 21.0,
+            "opens": "I think most startups should never raise venture money. Honestly, the best companies I"
+          },
+          {
+            "rank_score": 72.57,
+            "hook_type": "loss",
+            "start": 1.84,
+            "duration": 34.4,
+            "opens": "Today my guest built a company, lost almost everything, and came back. So, um,"
+          },
+          {
+            "rank_score": 72.19,
+            "hook_type": "number",
+            "start": 105.42,
+            "duration": 26.5,
+            "opens": "We raised $2 million before we had a single paying customer, and it made"
+          },
+          {
+            "rank_score": 69.35,
+            "hook_type": "loss",
+            "start": 68.1,
+            "duration": 17.5,
+            "opens": "Was there a moment you almost quit? I almost quit the company in 2021."
+          },
+          {
+            "rank_score": 67.07,
+            "hook_type": "number",
+            "start": 75.7,
+            "duration": 50.3,
+            "opens": "My co-founder read it, tore it in half, and said give me 90 days."
+          }
+        ]
+      },
+      "renders": [
+        {
+          "clip_id": 1,
+          "layout": "split",
+          "duration": 19.71,
+          "render_seconds": 7.4,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.014,
+          "loudness_lufs": -14.0,
+          "true_peak_dbtp": -4.4,
+          "captions": 12,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": -0.078,
+          "removed_seconds": 1.48,
+          "leading_blip": false,
+          "boundaries_refined": 4,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": null,
+          "split_center_error": 0.015,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        },
+        {
+          "clip_id": 2,
+          "layout": "split",
+          "duration": 32.45,
+          "render_seconds": 10.9,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.013,
+          "loudness_lufs": -14.1,
+          "true_peak_dbtp": -4.1,
+          "captions": 20,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": -0.02,
+          "removed_seconds": 2.04,
+          "leading_blip": false,
+          "boundaries_refined": 4,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": null,
+          "split_center_error": 0.015,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        },
+        {
+          "clip_id": 3,
+          "layout": "split",
+          "duration": 25.37,
+          "render_seconds": 8.9,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.013,
+          "loudness_lufs": -14.1,
+          "true_peak_dbtp": -4.4,
+          "captions": 15,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": 0.138,
+          "removed_seconds": 1.24,
+          "leading_blip": false,
+          "boundaries_refined": 3,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": null,
+          "split_center_error": 0.015,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        }
+      ]
+    },
+    "multi": {
+      "fixture": "multi",
+      "duration": 201.788,
+      "tts": "say",
+      "whisper_model": "small",
+      "diarizer": "local",
+      "face_detector": "haar",
+      "timing": {
+        "analyze_s": 35.0,
+        "candidates_s": 0.2,
+        "render_top_s": 69.9,
+        "analyze_realtime_factor": 0.173
+      },
+      "transcript": {
+        "wer": 0.0067,
+        "ref_words": 596,
+        "hyp_words": 596,
+        "substitutions": 4,
+        "deletions": 0,
+        "insertions": 0,
+        "turn_onset_error_median": 0.08,
+        "turn_onset_error_p90": 0.143,
+        "turn_offset_error_median": 0.182,
+        "turn_offset_error_p90": 0.292,
+        "fillers_in_script": 4,
+        "fillers_transcribed": 4
+      },
+      "diarization": {
+        "word_accuracy": 0.9043,
+        "words": 585,
+        "speakers_true": 3,
+        "speakers_found": 2,
+        "mapping": {
+          "S1": "host",
+          "S2": "guest"
+        }
+      },
+      "scenes": {
+        "true_cuts": 0,
+        "found_cuts": 0,
+        "hits": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_cuts": 0
+      },
+      "faces": {
+        "samples": 202,
+        "recall": 1.0,
+        "precision": 1.0,
+        "false_positives": 0,
+        "layout_hints": [
+          "group"
+        ]
+      },
+      "candidates": {
+        "count": 18,
+        "clean_start_rate": 1.0,
+        "clean_end_rate": 1.0,
+        "ends_on_question_rate": 0.0,
+        "duration_in_bounds_rate": 1.0,
+        "compliance": {
+          "PASS": 18
+        },
+        "strong_recall_at_5": 0.5,
+        "strong_found_at_5": [
+          "almost quit, resignation letter",
+          "most startups should never raise venture money",
+          "raised too early, it made us lazy"
+        ],
+        "top1_opens_on_strong_moment": true,
+        "top_5_ranks_containing_dull_material": [
+          2
+        ],
+        "mean_pairwise_iou_top_5": 0.053,
+        "top": [
+          {
+            "rank_score": 74.71,
+            "hook_type": "loss",
+            "start": 70.56,
+            "duration": 35.9,
+            "opens": "I almost quit the company in 2021. I had my resignation letter written. My"
+          },
+          {
+            "rank_score": 74.66,
+            "hook_type": "contrarian",
+            "start": 145.35,
+            "duration": 51.1,
+            "opens": "I think most startups should never raise venture money. Honestly, the best companies I"
+          },
+          {
+            "rank_score": 72.57,
+            "hook_type": "loss",
+            "start": 1.84,
+            "duration": 34.4,
+            "opens": "Today my guest built a company, lost almost everything, and came back. So, um,"
+          },
+          {
+            "rank_score": 72.19,
+            "hook_type": "number",
+            "start": 128.2,
+            "duration": 26.5,
+            "opens": "We raised $2 million before we had a single paying customer, and it made"
+          },
+          {
+            "rank_score": 69.35,
+            "hook_type": "loss",
+            "start": 68.1,
+            "duration": 17.5,
+            "opens": "Was there a moment you almost quit? I almost quit the company in 2021."
+          }
+        ]
+      },
+      "renders": [
+        {
+          "clip_id": 1,
+          "layout": "blur",
+          "duration": 35.08,
+          "render_seconds": 21.5,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.008,
+          "loudness_lufs": -14.0,
+          "true_peak_dbtp": -4.3,
+          "captions": 24,
+          "captions_over_speech": 0.917,
+          "first_caption_minus_first_speech": -0.087,
+          "removed_seconds": 0.92,
+          "leading_blip": false,
+          "boundaries_refined": 2,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": null,
+          "split_center_error": 0.013,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        },
+        {
+          "clip_id": 2,
+          "layout": "blur",
+          "duration": 48.2,
+          "render_seconds": 27.0,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.009,
+          "loudness_lufs": -14.0,
+          "true_peak_dbtp": -4.4,
+          "captions": 32,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": -0.225,
+          "removed_seconds": 3.14,
+          "leading_blip": false,
+          "boundaries_refined": 7,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": null,
+          "split_center_error": 0.013,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        },
+        {
+          "clip_id": 3,
+          "layout": "blur",
+          "duration": 32.45,
+          "render_seconds": 21.1,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.013,
+          "loudness_lufs": -14.1,
+          "true_peak_dbtp": -4.1,
+          "captions": 20,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": -0.02,
+          "removed_seconds": 2.04,
+          "leading_blip": false,
+          "boundaries_refined": 4,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": null,
+          "split_center_error": 0.013,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        }
+      ]
+    },
+    "scenes": {
+      "fixture": "scenes",
+      "duration": 179.001,
+      "tts": "say",
+      "whisper_model": "small",
+      "diarizer": "local",
+      "face_detector": "haar",
+      "timing": {
+        "analyze_s": 36.5,
+        "candidates_s": 0.1,
+        "render_top_s": 60.7,
+        "analyze_realtime_factor": 0.204
+      },
+      "transcript": {
+        "wer": 0.0095,
+        "ref_words": 528,
+        "hyp_words": 528,
+        "substitutions": 5,
+        "deletions": 0,
+        "insertions": 0,
+        "turn_onset_error_median": 0.085,
+        "turn_onset_error_p90": 0.136,
+        "turn_offset_error_median": 0.18,
+        "turn_offset_error_p90": 0.276,
+        "fillers_in_script": 4,
+        "fillers_transcribed": 4
+      },
+      "diarization": {
+        "word_accuracy": 0.9787,
+        "words": 517,
+        "speakers_true": 2,
+        "speakers_found": 2,
+        "mapping": {
+          "S1": "host",
+          "S2": "guest"
+        }
+      },
+      "scenes": {
+        "true_cuts": 29,
+        "found_cuts": 29,
+        "hits": 29,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_cuts": 0
+      },
+      "faces": {
+        "samples": 179,
+        "recall": 0.919,
+        "precision": 0.941,
+        "false_positives": 12,
+        "layout_hints": [
+          "none",
+          "single",
+          "two_shot"
+        ]
+      },
+      "candidates": {
+        "count": 16,
+        "clean_start_rate": 1.0,
+        "clean_end_rate": 1.0,
+        "ends_on_question_rate": 0.0,
+        "duration_in_bounds_rate": 1.0,
+        "compliance": {
+          "PASS": 16
+        },
+        "strong_recall_at_5": 0.5,
+        "strong_found_at_5": [
+          "almost quit, resignation letter",
+          "most startups should never raise venture money",
+          "raised too early, it made us lazy"
+        ],
+        "top1_opens_on_strong_moment": true,
+        "top_5_ranks_containing_dull_material": [],
+        "mean_pairwise_iou_top_5": 0.083,
+        "top": [
+          {
+            "rank_score": 74.3,
+            "hook_type": "contrarian",
+            "start": 122.71,
+            "duration": 21.0,
+            "opens": "I think most startups should never raise venture money. Honestly, the best companies I"
+          },
+          {
+            "rank_score": 72.26,
+            "hook_type": "loss",
+            "start": 1.84,
+            "duration": 34.4,
+            "opens": "Today my guest built a company, lost almost everything, and came back. So, um,"
+          },
+          {
+            "rank_score": 71.79,
+            "hook_type": "number",
+            "start": 105.42,
+            "duration": 26.5,
+            "opens": "We raised $2 million before we had a single paying customer, and it made"
+          },
+          {
+            "rank_score": 69.36,
+            "hook_type": "loss",
+            "start": 68.1,
+            "duration": 17.5,
+            "opens": "Was there a moment you almost quit? I almost quit the company in 2021."
+          },
+          {
+            "rank_score": 66.8,
+            "hook_type": "number",
+            "start": 75.7,
+            "duration": 50.3,
+            "opens": "My co-founder read it, tore it in half, and said give me 90 days."
+          }
+        ]
+      },
+      "renders": [
+        {
+          "clip_id": 1,
+          "layout": "mixed:split,track",
+          "duration": 19.71,
+          "render_seconds": 8.7,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.014,
+          "loudness_lufs": -14.0,
+          "true_peak_dbtp": -4.3,
+          "captions": 12,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": -0.078,
+          "removed_seconds": 1.48,
+          "leading_blip": false,
+          "boundaries_refined": 4,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": 1.0,
+          "split_center_error": 0.015,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        },
+        {
+          "clip_id": 2,
+          "layout": "mixed:blur,split,track",
+          "duration": 32.45,
+          "render_seconds": 28.9,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.013,
+          "loudness_lufs": -14.1,
+          "true_peak_dbtp": -4.1,
+          "captions": 20,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": -0.02,
+          "removed_seconds": 2.04,
+          "leading_blip": false,
+          "boundaries_refined": 4,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 1.85,
+          "track_shots_on_a_face": 1.0,
+          "split_center_error": 0.015,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        },
+        {
+          "clip_id": 3,
+          "layout": "mixed:blur,split,track",
+          "duration": 25.37,
+          "render_seconds": 23.0,
+          "width": 1080,
+          "height": 1920,
+          "fps": 30.0,
+          "av_duration_diff": 0.013,
+          "loudness_lufs": -14.1,
+          "true_peak_dbtp": -4.4,
+          "captions": 15,
+          "captions_over_speech": 1.0,
+          "first_caption_minus_first_speech": 0.138,
+          "removed_seconds": 1.24,
+          "leading_blip": false,
+          "boundaries_refined": 3,
+          "longest_silence_left": 0.0,
+          "crop_moves_per_min": 0.0,
+          "track_shots_on_a_face": 1.0,
+          "split_center_error": 0.016,
+          "checks": {
+            "resolution_1080x1920": true,
+            "h264_aac": true,
+            "fps_30": true,
+            "av_sync_under_100ms": true,
+            "loudness_within_1lu_of_-14": true,
+            "true_peak_at_most_-1dbtp": true,
+            "captions_over_speech_90pct": true,
+            "first_caption_within_400ms": true,
+            "no_silence_over_1s": true,
+            "no_blip_before_first_words": true
+          },
+          "passed": true
+        }
+      ]
+    }
+  },
+  "compliance": {
+    "cases": [
+      {
+        "case": "clean candidate",
+        "stage": "candidate",
+        "expected": "PASS",
+        "got": "PASS",
+        "ok": true,
+        "reasons": []
+      },
+      {
+        "case": "too short (8s)",
+        "stage": "candidate",
+        "expected": "FAIL",
+        "got": "FAIL",
+        "ok": true,
+        "reasons": [
+          "too short: 8.0s < 15s"
+        ]
+      },
+      {
+        "case": "too long (75s)",
+        "stage": "candidate",
+        "expected": "FAIL",
+        "got": "FAIL",
+        "ok": true,
+        "reasons": [
+          "too long: 75.0s > 60s"
+        ]
+      },
+      {
+        "case": "profanity",
+        "stage": "candidate",
+        "expected": "FAIL",
+        "got": "FAIL",
+        "ok": true,
+        "reasons": [
+          "profanity: asshole"
+        ]
+      },
+      {
+        "case": "competitor mention",
+        "stage": "candidate",
+        "expected": "FAIL",
+        "got": "FAIL",
+        "ok": true,
+        "reasons": [
+          "mentions competitor: Acme Ventures"
+        ]
+      },
+      {
+        "case": "unverified source rights",
+        "stage": "candidate",
+        "expected": "REVIEW_REQUIRED",
+        "got": "REVIEW_REQUIRED",
+        "ok": true,
+        "reasons": [
+          "source rights unverified: confirm authorization"
+        ]
+      },
+      {
+        "case": "rejected source rights",
+        "stage": "candidate",
+        "expected": "FAIL",
+        "got": "FAIL",
+        "ok": true,
+        "reasons": [
+          "source rights rejected (no licence)"
+        ]
+      },
+      {
+        "case": "forbidden topic, no model verdict",
+        "stage": "candidate",
+        "expected": "REVIEW_REQUIRED",
+        "got": "REVIEW_REQUIRED",
+        "ok": true,
+        "reasons": [
+          "'politics': not machine-verifiable, needs a human check"
+        ]
+      },
+      {
+        "case": "forbidden topic, keyword hit",
+        "stage": "candidate",
+        "expected": "REVIEW_REQUIRED",
+        "got": "REVIEW_REQUIRED",
+        "ok": true,
+        "reasons": [
+          "may touch 'politics' (mentions politics)"
+        ]
+      },
+      {
+        "case": "forbidden topic, model says compliant",
+        "stage": "candidate",
+        "expected": "PASS",
+        "got": "PASS",
+        "ok": true,
+        "reasons": []
+      },
+      {
+        "case": "forbidden topic, model says violation",
+        "stage": "candidate",
+        "expected": "REVIEW_REQUIRED",
+        "got": "REVIEW_REQUIRED",
+        "ok": true,
+        "reasons": [
+          "model check: discusses an election (verify)"
+        ]
+      },
+      {
+        "case": "render without subtitles",
+        "stage": "render",
+        "expected": "FAIL",
+        "got": "FAIL",
+        "ok": true,
+        "reasons": [
+          "subtitles are required"
+        ]
+      },
+      {
+        "case": "render with subtitles",
+        "stage": "render",
+        "expected": "PASS",
+        "got": "PASS",
+        "ok": true,
+        "reasons": []
+      },
+      {
+        "case": "publish copy missing hashtag",
+        "stage": "publish",
+        "expected": "FAIL",
+        "got": "FAIL",
+        "ok": true,
+        "reasons": [
+          "missing hashtags #founderstories"
+        ]
+      },
+      {
+        "case": "publish copy ok",
+        "stage": "publish",
+        "expected": "PASS",
+        "got": "PASS",
+        "ok": true,
+        "reasons": []
+      },
+      {
+        "case": "publish to a platform outside the campaign",
+        "stage": "publish",
+        "expected": "FAIL",
+        "got": "FAIL",
+        "ok": true,
+        "reasons": [
+          "platform not allowed: linkedin"
+        ]
+      },
+      {
+        "case": "publish copy mentions competitor",
+        "stage": "publish",
+        "expected": "FAIL",
+        "got": "FAIL",
+        "ok": true,
+        "reasons": [
+          "mentions competitor: Acme Ventures"
+        ]
+      }
+    ],
+    "passed": 17,
+    "total": 17
+  },
+  "jobs": {
+    "transient_error_retried": {
+      "status": "completed",
+      "attempts": 3,
+      "backoff_seconds": [
+        5,
+        10
+      ],
+      "ok": true
+    },
+    "gives_up_after_max_attempts": {
+      "status": "failed",
+      "attempts": 3,
+      "ok": true
+    },
+    "permanent_error_not_retried": {
+      "status": "failed",
+      "attempts": 1,
+      "ok": true
+    },
+    "cancelled_job_not_claimed": {
+      "status": "cancelled",
+      "ok": true
+    },
+    "stale_running_job_requeued": {
+      "requeued": [
+        5
+      ],
+      "ok": true
+    },
+    "duplicate_enqueue_deduplicated": {
+      "ok": true
+    },
+    "passed": 6,
+    "total": 6
+  },
+  "total_seconds": 325.4
+}

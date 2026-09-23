@@ -1,11 +1,11 @@
 # Testing
 
 ```bash
-uv run pytest -q                                   # 67 tests + 5 Postgres/S3 tests skipped locally, ~2 min
+uv run pytest -q                                   # 70 tests + 5 Postgres/S3 tests skipped locally, ~4 min
 uv run ruff check src tests scripts                # lint (config in pyproject.toml)
 uv run mypy                                        # type check (check_untyped_defs, pydantic plugin)
 cd apps/web && npm run lint && npm run typecheck && npm run build
-docker compose --profile test run --rm test        # the whole suite on Linux against Postgres + MinIO (72 tests)
+docker compose --profile test run --rm test        # the whole suite on Linux against Postgres + MinIO (75 tests)
 uv run ezra benchmark                              # quality benchmark (~5 min); see BENCHMARK_REPORT.md
 uv run python scripts/smoke_api.py --api URL --token T --video file.mp4   # end-to-end against a running API
 ```
@@ -38,7 +38,7 @@ uv run python scripts/smoke_api.py --api URL --token T --video file.mp4   # end-
 | `test_economics_analytics.py` | Payout (threshold, cap, budget, tracking window), confirmed vs estimated, EV monotonic and labelled, cohorts/calibration/prior, learnings, experiment winner only with evidence, optimizer needing data |
 | `test_security_diarization.py` | Media validation, import roots, webhook signatures, OAuth state (single-use, provider-bound, expiring), safe redirects, rate limiter, MFCC + clustering on synthetic voices, **one-speaker default**, speaker assignment |
 | `test_publishers.py` | YouTube (OAuth + PKCE, resumable upload, `publishAt`, metrics, token refresh), TikTok (FILE_UPLOAD init, single and multi-chunk `Content-Range`, SELF_ONLY for unaudited apps, status, failure, video query), Instagram (REELS container, rupload, polling, publish, insights, no private posts), 429 → retryable, missing credentials name the env var, local export |
-| `test_e2e.py` | The **pipeline on real footage** (transcript, 2 speakers, faces/layouts, topics, ≥10 scored candidates with compliance and EV, a 1080×1920 split render with A/V drift < 0.12 s and first caption within 0.4 s of speech, approve → metadata → dry run → local-export publish → duplicate refusal → metrics → earnings → insights → export); platform variant + re-render; the **API** (auth, 404s, render job, signed ranged media, tampered signature, approve, publish problems, bad upload type, earnings, dashboard); the **CLI**; the **MCP server over stdio** (tool list, transcript paging, agent scoring, render job polling, approve, publish dry run); **OpenShorts** import |
+| `test_e2e.py` | The **pipeline on real footage** (transcript, 2 speakers, faces/layouts, topics, ≥10 scored candidates with compliance and EV, a 1080×1920 split render with A/V drift < 0.12 s and first caption within 0.4 s of speech, approve → metadata → dry run → local-export publish → duplicate refusal → metrics → earnings → insights → export); platform variant + re-render; the **API** (auth, 404s, render job, signed ranged media, tampered signature, approve, publish problems, bad upload type, earnings, dashboard); the **CLI**; the **MCP server over stdio** (tool list, transcript paging, agent scoring, render job polling, approve, publish dry run); **OpenShorts** import; a **scheduled post** published by the scheduler once due; **B-roll** re-render; a **live session** replaying the fixture at 20× into rolling-window candidates |
 | `test_postgres_s3.py` | Postgres migrations, `SKIP LOCKED` claiming with 6 concurrent workers, campaign/source/job on Postgres + MinIO, S3 key validation, and the full analyze → candidates → render → approve pipeline on the production backends |
 
 ## Verified outside the automated suite

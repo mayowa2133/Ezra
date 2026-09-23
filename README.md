@@ -1,162 +1,120 @@
-# clipper
+# Ezra
 
-A local clipping operator for campaigns like Content Rewards. Give it long-form footage and a campaign's rules.
-Your coding agent (Claude Code or Codex) finds and ranks the moments, you approve the good ones, and clipper
-posts them and tracks what they earn. What performs feeds back into how the agent judges the next batch.
+Ezra turns long-form footage you are authorized to use into short vertical clips for performance-paid
+campaigns (CPM programmes such as Content Rewards), keeps a human in charge of what gets posted, and
+learns from what the posts earn.
 
-```
-clipper run campaign-184
-```
-
-```
-Campaign: Podcast XYZ
-CPM: $2.00
-Source: episode-142
-
-Analyzed: 01:14:03.0
-Candidate moments: 37
-Rendered: 5
-
-Top clips:
-
-1. "He lost $400k overnight"
-   AI score: 94/100
-   Duration: 31s
-   Opens on the loss itself; lesson lands at ~20s and pays it off.
-
-2. "Nobody tells founders this"
-   AI score: 91/100
-   ...
-
-Approve clips? [1,2,3,4,5] 1,2
-
-Generating platform copy...
-
-Clip 12
-  Tiktok: He lost $400k overnight 😳 #podcastxyz
-  Instagram: One mistake almost cost him everything... #podcastxyz
-  Youtube: How He Lost $400,000 Overnight
-
-Publish now? [y/N] y
-✓ Tiktok published
-✓ Instagram published
-✓ Youtube published
-
-Tracking enabled.
-```
-
-## How it works
+It is agent-native: every capability is a service exposed through a **CLI**, a **REST API**, an
+**MCP server** (so Claude Code, Codex or any MCP client can operate it) and a **web dashboard**. The
+judgement parts (finding moments, scoring them, writing copy) can be done by Ezra's own heuristics,
+by an agent over MCP, or by a local model CLI. Ezra never calls a paid model API on its own.
 
 ```
- campaign.yaml ──┐
- episode.mp4 ────┤
-                 ▼
-        clipper (local, deterministic)                 your agent over MCP (the judgment)
- ┌──────────────────────────────────────┐        ┌──────────────────────────────────────┐
- │ faster-whisper transcript (words)    │ ─────▶ │ reads the whole transcript            │
- │                                      │ ◀───── │ proposes ~20 moments                  │
- │ snap to word edges, compliance check │ ─────▶ │ scores each on the rubric,            │
- │ weight scores → ai_score             │ ◀───── │ comparing them against each other     │
- │ render top N: 9:16 crop that follows │        │                                      │
- │ the speaker's face, burned captions  │        │                                      │
- │ ─── you approve in the terminal ───  │        │                                      │
- │ hashtag / rule gate on copy          │ ◀───── │ writes per-platform copy              │
- │ ─── you confirm publishing ───       │        │                                      │
- │ Upload-Post → TikTok / IG / YouTube  │        │                                      │
- │ metrics → revenue → insights         │ ─────▶ │ turns stats into saved learnings,     │
- └──────────────────────────────────────┘        │ which go into every future brief      │
-                                                 └──────────────────────────────────────┘
+ezra run demo
 ```
 
-- **No model API.** clipper never calls an LLM. The thinking happens in Claude Code or Codex through the
-  `clipper` MCP server, on your existing subscription. `clipper run` starts headless `claude -p` (or
-  `codex exec`) sessions for the judgment steps.
-- **The agent judges, code keeps it honest.** The agent scores seven dimensions and clipper applies the
-  weights, so scores stay comparable. Cut points snap to word boundaries. Duration, profanity, competitor
-  and forbidden-term rules are enforced in code before the judge sees a clip, and required hashtags are
-  enforced before anything posts.
-- **Nothing ships without you.** Headless sessions can't approve or publish. Publishing needs a human
-  approval plus an explicit confirm.
+Real output on the 3-minute synthetic interview that `ezra benchmark` generates (fresh clone, Apple M-series,
+about 2.5 minutes including transcription, analysis and five renders):
 
-Default rubric (override per campaign):
-
-| Hook | Retention | Standalone context | Emotion | Novelty | Comment potential | Campaign fit |
-|---|---|---|---|---|---|---|
-| 25% | 20% | 15% | 10% | 10% | 10% | 10% |
-
-## Setup
-
-Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), ffmpeg, and Claude Code (`claude`) or Codex (`codex`) signed in.
-
-```bash
-uv sync --extra local                 # clipper + faster-whisper + OpenCV (face tracking)
-cp .env.example .env                  # add Upload-Post keys when you want to publish
-uv run clipper init
+```
+1 source(s) · 16 candidates (16 publishable) · rendered 5 · review queue 5
+                                          ready for review                                          
+┏━━━━━━┳━━━━━━┳━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ clip ┃ rank ┃ dur ┃ layout ┃ compliance      ┃ EV/post ┃ opens with                              ┃
+┡━━━━━━╇━━━━━━╇━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1    │ 74.3 │ 20s │ split  │ REVIEW_REQUIRED │ $24.00  │ "I think most startups should never     │
+│      │      │     │        │                 │         │ raise venture money.…"                  │
+│ 2    │ 72.6 │ 32s │ split  │ REVIEW_REQUIRED │ $23.21  │ "Today my guest built a company, lost   │
+│      │      │     │        │                 │         │ almost everything, and…"                │
+│ 3    │ 72.2 │ 25s │ split  │ REVIEW_REQUIRED │ $23.05  │ "We raised $2 million before we had a   │
+│      │      │     │        │                 │         │ single paying…"                         │
+│ 4    │ 69.3 │ 17s │ split  │ REVIEW_REQUIRED │ $21.83  │ "Was there a moment you almost quit? I  │
+│      │      │     │        │                 │         │ almost quit the…"                       │
+│ 5    │ 67.1 │ 49s │ split  │ REVIEW_REQUIRED │ $20.88  │ "My co-founder read it, tore it in      │
+│      │      │     │        │                 │         │ half, and said give me"                 │
+└──────┴──────┴─────┴────────┴─────────────────┴─────────┴─────────────────────────────────────────┘
+next: `ezra review` (or the dashboard /review)
 ```
 
-## Use it
+Every clip is REVIEW_REQUIRED because the demo campaign forbids a topic (politics) and has a free-form
+rule, which only a person can clear. That is the approval gate doing its job.
 
-```bash
-uv run clipper campaign create campaigns/example.yaml
-uv run clipper source add campaign-184 ~/footage/episode-142.mp4
-uv run clipper run campaign-184       # the whole loop
-```
+## What it does
 
-Or do it from inside Claude Code in this repo: `.mcp.json` registers the server and the `clipping` skill
-knows the workflow. Just say *"clip campaign-184"*.
-
-Step by step, if you want control:
-
-| Command | What it does |
+| Stage | What happens |
 |---|---|
-| `clipper transcribe <source_id>` | Local Whisper transcription with word timestamps |
-| `clipper run <campaign> [--candidates 20 --render 5 --agent codex --openshorts --no-publish]` | The full loop |
-| `clipper clips <campaign> [--status scored]` | Ranked clips |
-| `clipper render <clip_id>... [--framing blur --crop-x 0.3]` | Re-render; the crop follows the speaker unless you pin `--crop-x` |
-| `clipper review <campaign>` | Approve or reject rendered clips |
-| `clipper copy <campaign>` | Agent writes platform copy for approved clips |
-| `clipper publish <campaign> [--dry-run --private --schedule 2026-10-01T18:00]` | Post approved clips (asks first); `--private` posts visible only to you on TikTok/YouTube to test the connection |
-| `clipper posts [campaign]` | Every post with status, visibility and latest numbers |
-| `clipper metrics sync` / `clipper metrics add <post_id> <views> --payout 42` | Pull or record performance |
-| `clipper report <campaign>` | Views, qualified views, estimated vs actual revenue |
-| `clipper insights [--explain]` | What's working; `--explain` has the agent save learnings |
-| `clipper mcp` / `clipper mcp-config [--codex]` | Run the MCP server, or print config for other clients |
+| Campaigns | Import YAML/JSON/CSV rules (CPM, qualified-view threshold, caps, budget, platforms, duration, hashtags, forbidden topics, competitors, posting limits). Each becomes an enforceable rule with a severity. |
+| Sources | Ingest a file or URL with a **rights basis**; unverified footage is flagged on every candidate. SHA-256 dedupe, ffprobe validation. |
+| Analysis | faster-whisper word timestamps, speaker diarization, scene cuts, face tracks, silence, topic segments, emotion/Q&A signals, each stored with provider, version and confidence. |
+| Candidates | Sentence-aligned windows scored on nine factors (hook, retention, context, emotion, novelty, discussion, payoff, visual, campaign fit), each with a written reason; diversity-filtered; compliance checked; expected value estimated from the campaign's payout rules. |
+| Ranking | Campaign weights + a performance prior learned from your own published results + optional model/agent critique. |
+| Rendering | 9:16 / 1:1 / 16:9 / 4:5; per-scene layout (face tracking, split screen for two-shots, blurred fit for slides); silence and filler removal with waveform-refined cuts; six animated caption themes; hook card, logo, watermark, CTA, punch-ins, B-roll, loudness normalization; SRT/ASS sidecars. |
+| Review | Keyboard-driven queue (CLI and dashboard) with scores, reasons, compliance and EV side by side. Nothing publishes without approval. |
+| Publishing | Official APIs for YouTube, TikTok and Instagram (OAuth + PKCE, resumable uploads), optional Upload-Post, and a local export target. Dry run first, idempotency keys, posting limits, scheduling by timezone. |
+| Learning | Metrics sync, qualified-view earnings against caps and budget, trait cohorts with shrinkage, rank-vs-views calibration, A/B experiments, weight optimization. |
 
-Revenue follows the campaign file: `qualified = views ≥ minimum_views ? views : 0`, then
-`estimate = min(qualified / 1000 × CPM, maximum_payout)`, and the campaign total is capped at `budget`.
+## Quick start
 
-## Campaigns
-
-See [`campaigns/example.yaml`](campaigns/example.yaml): CPM, minimum views, payout caps, duration limits,
-forbidden and required items, hashtags, platforms, a free-text brief and optional rubric weights.
-
-## Optional: OpenShorts
-
-[OpenShorts](https://github.com/mutonby/openshorts) (MIT) can run alongside as a second opinion and a better
-renderer: active-speaker detection and split-screen layouts (clipper's own crop follows the most
-prominent face, shot by shot). `clipper run --openshorts` sends each source through a
-self-hosted OpenShorts and imports its moments as candidates. Your agent scores them against its own picks.
-When an OpenShorts moment wins, `--framing openshorts` reuses its render. Start it with
-`docker compose --profile openshorts up -d`. It needs its own picker model: a Gemini key, or a local Ollama.
-
-## Publishing notes
-
-Publishing uses [Upload-Post](https://upload-post.com): one API for TikTok, Instagram and YouTube. The free plan
-allows 10 uploads a month, and TikTok needs a paid tier. Separately, TikTok keeps posts from unaudited API
-clients private until the app passes review.
-
-Setup: create an account, generate an API key in account settings, create a profile under **User Management**
-at app.upload-post.com, connect your accounts to it (Instagram must be a Business or Creator account), then set
-`UPLOAD_POST_API_KEY` and `UPLOAD_POST_USER` (the profile's username) in `.env`.
-
-Test before going public: `clipper publish <campaign> --private` posts visible only to you on TikTok and YouTube
-(Instagram has no private posts, so it's skipped). Private posts stay out of revenue and insights, and the clip
-stays approved for the real publish.
-
-## Development
+Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), ffmpeg/ffprobe on PATH. Node 22 for the
+dashboard. Docker alternative: see [Deployment](docs/DEPLOYMENT.md).
 
 ```bash
-uv run pytest -q
+uv sync --extra local                   # deps + faster-whisper, OpenCV, PySceneDetect
+uv run ezra init                        # creates ./data (SQLite + local storage)
+uv run ezra campaign import campaigns/demo-campaign.yaml
+uv run ezra source add ~/footage/episode.mp4 --campaign demo --rights campaign_supplied
+uv run ezra analyze --source 1
+uv run ezra candidates --campaign demo --top 10
+uv run ezra render --campaign demo --top 5
+uv run ezra review --campaign demo      # a = approve, r = reject, s = skip
+uv run ezra accounts add tiktok local-export me
+uv run ezra publish --clip 1 --platforms tiktok      # shows the dry run, asks before posting
+uv run ezra metrics add 1 12000                      # or: ezra metrics sync (platform APIs)
+uv run ezra report demo
 ```
 
-See [AGENTS.md](AGENTS.md) for the module map and the invariants.
+No footage handy? `uv run ezra benchmark --fixtures podcast` synthesizes a 3-minute two-speaker
+interview (macOS `say` or espeak-ng), runs the whole pipeline on it, and leaves the video at
+`~/.cache/ezra/fixtures/podcast.mp4`, ready for `ezra source add`.
+
+Dashboard and API:
+
+```bash
+uv run ezra serve                       # API on :8000 with an embedded worker (OpenAPI at /docs)
+cd apps/web && npm install && npm run dev   # dashboard on :3000
+```
+
+With an agent: this repo ships `.mcp.json`, so Claude Code picks up the `ezra` MCP server; the
+operating guide is [skills/ezra/SKILL.md](skills/ezra/SKILL.md). Codex reads MCP servers from
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.ezra]
+command = "uv"
+args = ["run", "--directory", "/path/to/Ezra", "ezra", "mcp"]
+```
+
+## Documentation
+
+| | |
+|---|---|
+| [PRD](docs/PRD.md) | Problem, users, scope, success measures |
+| [Architecture](docs/ARCHITECTURE.md) | Services, job queue, providers, rendering pipeline |
+| [Data model](docs/DATA-MODEL.md) | Tables and lifecycles |
+| [API](docs/API.md) · [MCP](docs/MCP.md) · [CLI](docs/CLI.md) | Interfaces |
+| [Campaigns](docs/CAMPAIGNS.md) | Campaign file format and how rules are enforced |
+| [Deployment](docs/DEPLOYMENT.md) | Local, Docker Compose (Postgres + MinIO), configuration |
+| [Security](docs/SECURITY.md) | Secrets, auth, uploads, OAuth, content rights |
+| [Testing](docs/TESTING.md) · [Benchmark](BENCHMARK_REPORT.md) | How it is verified and how well it does |
+| [Decisions](docs/DECISIONS.md) · [OSS licenses](docs/OSS-LICENSES.md) | Why it is built this way; what it uses |
+| [Build report](BUILD_REPORT.md) · [External setup](REMAINING_EXTERNAL_SETUP.md) | Status and what needs your accounts |
+
+## Ground rules Ezra enforces
+
+- Footage needs a rights basis; clips from unverified sources are marked REVIEW_REQUIRED, rejected
+  sources FAIL.
+- A human approves every clip, and publishing is a dry run until confirmed. Autonomous publishing
+  needs both the campaign flag and `EZRA_ALLOW_AUTONOMOUS=1`, and still only posts PASS clips.
+- Publishing uses official APIs or your own export; no password automation, no scraping of
+  marketplaces.
+- Secrets live in the environment or an encrypted store, never in ordinary tables.
