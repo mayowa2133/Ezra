@@ -33,7 +33,7 @@ import httpx
 from . import costs, secrets
 from .config import get_settings
 
-CLI_TIMEOUT = 300   # seconds per structured call; the critic batches to stay well inside it
+CLI_TIMEOUT = 600   # seconds per structured call; the critic batches to stay well inside it
 
 
 class LLMUnavailable(RuntimeError):

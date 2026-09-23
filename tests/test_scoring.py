@@ -115,5 +115,29 @@ def test_critic_runs_in_batches_and_survives_a_failed_batch(monkeypatch):
     monkeypatch.setattr(llm, "get_llm", lambda *a, **k: SimpleNamespace(available=True))
     monkeypatch.setattr(llm, "call", fake_call)
     out = candidates.critic_pass(cands, None)
-    assert sorted(seen) == [3, 8, 8]                   # 19 candidates -> batches of 8, 8, 3
-    assert set(out) == set(range(1, 9)) | set(range(17, 20))   # the failed batch keeps heuristic scores
+    assert sorted(seen) == [1, 6, 6, 6]                # 19 candidates -> batches of 6, 6, 6, 1
+    assert set(out) == set(range(1, 7)) | set(range(13, 20))   # the failed batch (7-12) keeps heuristic scores
+
+
+def test_critic_keep_range_becomes_new_bounds(monkeypatch):
+    from types import SimpleNamespace
+
+    from ezra import candidates, llm
+
+    segs = [Segment(10, 14, "Yeah, it's just underneath all the money."), Segment(14, 20, "So they ran."),
+            Segment(20, 30, "He trapped 100 cops inside a theater with one way out."),
+            Segment(30, 40, "Then he locked the door and walked away with the money."),
+            Segment(40, 44, "Let us do a lightning round.")]
+    monkeypatch.setattr(candidates, "load_segments", lambda sid: segs)
+    c = SimpleNamespace(id=1, start=10.0, end=40.0, context_before="", transcript="...", source_id=7)
+
+    def fake_call(system, prompt, schema, task, **kw):
+        assert "3. [20.0s] He trapped 100 cops" in prompt and "(after the clip)" in prompt
+        return llm.LLMResult({"candidates": [{"id": 1, "scores": {}, "hook_text": "h", "title": "t",
+                                              "hook_type": "other", "reason": "r", "keep": {"from": 3, "to": 4},
+                                              "rule_checks": []}]}, "fake", None, 0.1, {})
+
+    monkeypatch.setattr(llm, "get_llm", lambda *a, **k: SimpleNamespace(available=True))
+    monkeypatch.setattr(llm, "call", fake_call)
+    out = candidates.critic_pass([c], None)
+    assert out[1]["_bounds"] == (20, 40)              # opens on the strongest line, ends on the payoff

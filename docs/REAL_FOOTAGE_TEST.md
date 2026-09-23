@@ -21,6 +21,8 @@ Why this is a hard case for a tool tuned on podcasts:
 | 3 | Sponsor **segments** detected across the whole transcript (plus the sponsor's name learned, so woven-in mentions count); challenge/danger vocabulary; campaign-brief-aware hook; per-source loudness energy | Both sponsor segments out of the top 8; the video's cold-open stakes line reached #4; still weak openings ("Yeah, it's just underneath all the money…") |
 | 4 | Model critic (`EZRA_LLM=claude-cli`), with an editorial brief on what high-performing clips share; batched and parallel (a single 25-candidate call timed out at 900 s) | Selection and hooks clearly better: "He trapped 100 cops inside a theater", "He broke into police HQ to save his team"; one duplicate story slipped through |
 | 5 | Duplicates judged on final scores; render_top never renders two cuts of one story; faceless shots follow concentrated motion; groups follow a dominant face; short faceless shots fill from the centre; 4 fps layout sampling | No duplicates; letterboxed share of screen time **55% → 22%** |
+| 6 | The critic may move the cut: it sees each candidate as numbered sentences (plus the three that follow) and returns the range to keep; Ezra snaps, re-scores and re-checks it | Trims were sensible, but calls took ~250 s for 4–8 candidates; two batches hit the 300 s ceiling and fell back to heuristics (the fallback worked) |
+| 7 | Critic batches of 6, five in parallel, 600 s ceiling, reasons capped at 40 words | All 25 shortlisted candidates critic-scored, 10 re-cut; 5 of the top 8 open where the critic chose ("But what the cops don't realize is that there's one way in…") |
 
 Bugs found and fixed along the way, beyond quality:
 - **`ezra run` hung forever** when a job failed transiently. The CLI didn't run its own retries.
@@ -28,23 +30,25 @@ Bugs found and fixed along the way, beyond quality:
 - **A stale transcript was reused** after a segmentation upgrade.
 - **A model timeout** killed the whole run instead of falling back to heuristics.
 
-## Final output (iteration 5, top 8 of 40 candidates)
+## Final output (iteration 7, top 8 of 40 candidates)
 
-| clip | critic hook | length | letterboxed |
+| clip | critic hook | length | cut |
 |---|---|---|---|
-| 6 | Winning mom $100K through city sewers | 34 s | 9% |
-| 7 | He trapped 100 cops inside a theater | 21 s | 46% |
-| 8 | Escaping 100 real cops with secret rooms | 35 s | 22% |
-| 9 | He snuck INTO the police headquarters | 27 s | 38% |
-| 10 | Cops took my detonator — big mistake | 16 s | 0% |
-| 11 | Final minutes: 100 cops, one dead end | 56 s | 28% |
-| 12 | Genius plan or the dumbest thing ever? | 22 s | 0% |
-| 13 | Using friend's arrest as a diversion to escape | 23 s | 26% |
+| 6 | His unfindable secret room was found instantly | 36 s | extended 2 s to the payoff |
+| 7 | The 'detonator' controls every cop's camera | 16 s | as scouted |
+| 8 | We trapped 100 cops in a movie theater | 20 s | opens 1.3 s later, on the key line |
+| 9 | $100,000 for your mom — survive the chase | 38 s | ends 11.6 s earlier, on the payoff |
+| 10 | Breaking friends out of jail for their moms | 17 s | opens 10 s later |
+| 11 | 100 real cops are hunting him right now | 35 s | as scouted |
+| 12 | Last goodbye — then cops came out of nowhere | 24 s | shifted 4.5 s later |
+| 13 | We're sneaking into the police station | 22 s | as scouted |
+
+Letterboxed ("blur") screen time is about 22% across these clips; the rest fills the vertical frame.
 
 Runtime for the 20.5-minute source: 8.5 minutes end to end. That covers transcription and analysis,
-critic scoring of 25 candidates in 4 parallel batches, and 8 renders.
+critic scoring of 25 candidates in 5 parallel batches, and 8 renders.
 
-Regression check after the changes: full test suite (79 passed) and the four-fixture benchmark
+Regression check after the changes: full test suite (80 passed) and the four-fixture benchmark
 (every render check still passes; top-5 overlap 0.08 → 0.02).
 
 ## What this can and can't tell you
@@ -64,5 +68,8 @@ Regression check after the changes: full test suite (79 passed) and the four-fix
    labels, picks moments.
 3. **Without the model critic** (heuristics only), openings are weaker. For challenge content, run
    with `EZRA_LLM=claude-cli` (or an agent over MCP).
-4. **Critic boundaries**: the critic chooses among Ezra's cuts but can't move them. Letting it
-   propose tighter starts ("open on the strongest line") is the next quality step.
+4. **Critic latency**: each structured `claude -p` call takes ~30 s per candidate, so the critic
+   adds a few minutes per source even in parallel. An agent over MCP, or a local model through
+   `openai-compatible`, are the alternatives.
+5. **Adjacent beats** of one sequence can both rank (clips 6 and 7 overlap by 5 s). They work as a
+   "part 1 / part 2" pair, but a stricter story grouping could keep only one.

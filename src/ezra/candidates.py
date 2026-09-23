@@ -230,12 +230,10 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
     return [get(i) for i in out_ids]
 
 
-def create_custom(source_id: int, start: float, end: float, title: str | None = None, hook: str | None = None,
-                  hook_type: str | None = None, reason: str | None = None, origin: str = "manual",
-                  campaign: str | int | None = None) -> Candidate:
-    """A candidate chosen by a person or an agent. Boundaries snap to words."""
+def _evaluate_span(source_id: int, camp: Campaign | None, start: float, end: float) -> dict[str, Any]:
+    """Snap [start, end] to words and score it like any scouted window (features,
+    heuristic factors, ad-segment check, candidate-stage compliance)."""
     src = sources.get(source_id)
-    camp = _campaign_for(src, campaign)
     segments = load_segments(source_id)
     words = [w for s in segments for w in s.words]
     s0, e0 = snap(words, start, end, src.duration)
@@ -250,17 +248,36 @@ def create_custom(source_id: int, start: float, end: float, title: str | None = 
                 rows["scenes"].data.get("scenes", []) if "scenes" in rows else [],
                 rows["topics"].data["topics"] if "topics" in rows else [], {}, 1,
                 loudness=rows["loudness"].data if "loudness" in rows else None)
+    ads = ad_regions(segments)
+    in_ad = sum(max(0.0, min(e0, b) - max(s0, a)) for a, b in ads) / max(1e-6, e0 - s0)
+    if in_ad > 0.3:
+        f["ad_read"] = max(int(f.get("ad_read", 0)), 2)
+    low = win.text.lower()
+    f["ad_read"] = int(f.get("ad_read", 0)) + sum(low.count(b) for b in sponsor_terms(segments, ads))
     scores, why = heuristic.score(f, _campaign_dict(camp))
     weights = campaigns.normalized_weights(camp.weights if camp else None)
     comp = compliance.evaluate(camp, "candidate", duration=e0 - s0, transcript=win.text, source=src,
                                speakers=f["speakers"])
+    return {"start": s0, "end": e0, "inside": inside, "win": win, "f": f, "scores": scores, "why": why,
+            "content": heuristic.content_score(scores, weights), "comp": comp}
+
+
+def create_custom(source_id: int, start: float, end: float, title: str | None = None, hook: str | None = None,
+                  hook_type: str | None = None, reason: str | None = None, origin: str = "manual",
+                  campaign: str | int | None = None) -> Candidate:
+    """A candidate chosen by a person or an agent. Boundaries snap to words."""
+    src = sources.get(source_id)
+    camp = _campaign_for(src, campaign)
+    ev = _evaluate_span(source_id, camp, start, end)
+    s0, e0, inside, win, f, scores, why, comp = (ev["start"], ev["end"], ev["inside"], ev["win"], ev["f"],
+                                                 ev["scores"], ev["why"], ev["comp"])
     with db.session() as s:
         cand = Candidate(campaign_id=camp.id if camp else None, source_id=source_id, start=s0, end=e0,
                          transcript=win.text, speakers=f["speakers"], title=title or _hook_text(inside[0].text),
                          hook=hook or _hook_text(inside[0].text),
                          hook_type=hook_type or heuristic.hook_type(inside[0].text, f), reason=reason, origin=origin,
                          features={k: v for k, v in f.items() if k != "vocab"}, scorer="heuristic",
-                         confidence=heuristic.CONFIDENCE, content_score=heuristic.content_score(scores, weights),
+                         confidence=heuristic.CONFIDENCE, content_score=ev["content"],
                          score_explanations={"heuristic": why, "heuristic_scores": scores},
                          compliance_status=comp["status"], compliance_reasons=comp["reasons"],
                          **{FACTOR_COLUMNS[k]: v for k, v in scores.items()})
@@ -288,32 +305,52 @@ What high-performing clips share, and what you reward:
 
 Score each candidate on every factor 0-100 (50 = an average clip a competent editor would post,
 80+ = you would bet on it, 90+ is rare). Compare candidates against each other and use the full range.
+Each candidate is given as numbered sentences. In `keep`, choose the sentence range that makes the best
+clip (open on the strongest line, end on the payoff) and score the clip *as kept*.
 `hook_text` is the on-screen hook card: at most 8 punchy words that make a stranger stop scrolling
 (e.g. "He paid 100 cops to catch him"), not a quote of the first line. `title` is a specific
-YouTube-style title. Be concrete in `reason`: what the opening does, whether it stands alone, where
-the payoff lands. Scores are ranking estimates, not predictions. For each listed review rule, say
+YouTube-style title. `reason`: at most 40 words, concrete: what the opening does, whether it stands
+alone, where the payoff lands. Scores are ranking estimates, not predictions. For each listed review rule, say
 whether the clip complies."""
 
 
 def _critic_schema(rule_ids: list[int]) -> dict[str, Any]:
     factor_props = {k: {"type": "number", "minimum": 0, "maximum": 100} for k in FACTORS}
     return {"type": "object", "required": ["candidates"], "properties": {"candidates": {"type": "array", "items": {
-        "type": "object", "required": ["id", "scores", "hook_text", "title", "hook_type", "reason", "rule_checks"],
+        "type": "object", "required": ["id", "scores", "hook_text", "title", "hook_type", "reason", "keep",
+                                       "rule_checks"],
         "properties": {
             "id": {"type": "integer"},
             "scores": {"type": "object", "required": FACTORS, "properties": factor_props},
             "hook_text": {"type": "string", "description": "On-screen hook, max 10 words"},
             "title": {"type": "string", "description": "Specific YouTube-style title, max 90 chars"},
             "hook_type": {"type": "string", "enum": heuristic.HOOK_TYPES},
-            "reason": {"type": "string"},
+            "reason": {"type": "string", "description": "At most 40 words"},
+            "keep": {"type": "object", "required": ["from", "to"],
+                     "description": "Sentence numbers to keep, inclusive. Tighten to open on the strongest "
+                                    "line and end on the payoff; you may extend into the listed later "
+                                    "sentences to reach it. Keep all sentences if the cut is already right.",
+                     "properties": {"from": {"type": "integer"}, "to": {"type": "integer"}}},
             "rule_checks": {"type": "array", "items": {"type": "object", "required": ["rule_id", "compliant", "reason"],
                                                         "properties": {"rule_id": {"type": "integer"},
                                                                        "compliant": {"type": "boolean"},
                                                                        "reason": {"type": "string"}}}}}}}}}
 
 
-CRITIC_BATCH = 8        # candidates per model call: small enough to answer in well under a minute
-CRITIC_PARALLEL = 3
+_SEGMENT_CACHE: dict[int, list[Any]] = {}
+
+
+def _segments(source_id: int) -> list[Any]:
+    if source_id not in _SEGMENT_CACHE:
+        try:
+            _SEGMENT_CACHE[source_id] = load_segments(source_id)
+        except RuntimeError:          # no transcript: the critic sees no sentences, keeps the cut
+            _SEGMENT_CACHE[source_id] = []
+    return _SEGMENT_CACHE[source_id]
+
+
+CRITIC_BATCH = 6        # candidates per model call (a CLI structured call takes ~30 s per candidate)
+CRITIC_PARALLEL = 5     # all batches of a 25-candidate shortlist at once
 
 
 def critic_pass(cands: list[Candidate], camp: Campaign | None) -> dict[int, dict[str, Any]]:
@@ -326,6 +363,9 @@ def critic_pass(cands: list[Candidate], camp: Campaign | None) -> dict[int, dict
 
     batches = [cands[i:i + CRITIC_BATCH] for i in range(0, len(cands), CRITIC_BATCH)]
     learned = [x.text for x in perf.learnings()]          # read once, not from every thread
+    _SEGMENT_CACHE.clear()                                   # fresh per pass (transcripts can be redone)
+    for sid in {c.source_id for c in cands}:
+        _segments(sid)
     out: dict[int, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=CRITIC_PARALLEL) as pool:
         for part in pool.map(lambda b: _critic_batch(b, camp, learned), batches):
@@ -343,9 +383,16 @@ def _critic_batch(cands: list[Candidate], camp: Campaign | None, learned: list[s
             lines.append("Review rules:\n" + "\n".join(f"  rule {r.id}: {r.description}" for r in review_rules))
     if learned:
         lines.append("Learned from past performance:\n" + "\n".join(f"  - {t}" for t in learned[:10]))
+    sentences: dict[int, list[Any]] = {}
     for c in cands:
+        segs = _segments(c.source_id)
+        inside = [sg for sg in segs if sg.end > c.start + 0.05 and sg.start < c.end - 0.05]
+        after = [sg for sg in segs if sg.start >= c.end - 0.05][:3]
+        sentences[c.id] = inside + after
+        numbered = "\n".join(f"  {i + 1}. [{sg.start:.1f}s] {sg.text}" + ("   (after the clip)" if sg in after else "")
+                             for i, sg in enumerate(inside + after))
         lines.append(f"\n[id {c.id}] {c.start:.1f}-{c.end:.1f}s ({c.end - c.start:.0f}s)"
-                     f"\nContext before: {(c.context_before or '')[-300:]}\nCLIP: {c.transcript}")
+                     f"\nContext before: {(c.context_before or '')[-300:]}\nSentences:\n{numbered}")
     try:
         res = llm.call(CRITIC_SYSTEM, "\n".join(lines), _critic_schema([r.id for r in review_rules]),
                        task="clip_critic", campaign_id=camp.id if camp else None, source_id=cands[0].source_id)
@@ -357,8 +404,38 @@ def _critic_batch(cands: list[Candidate], camp: Campaign | None, learned: list[s
         logging.getLogger("ezra.critic").warning("critic batch skipped (%s); heuristic scores kept", e)
         return {}
     wanted = {c.id for c in cands}
-    return {int(x["id"]): x | {"_provider": res.provider} for x in res.data.get("candidates", [])
-            if int(x["id"]) in wanted}
+    lo, hi = (camp.min_duration, camp.max_duration) if camp else (15.0, 60.0)
+    out: dict[int, dict[str, Any]] = {}
+    for x in res.data.get("candidates", []):
+        cid = int(x["id"])
+        if cid not in wanted:
+            continue
+        item = x | {"_provider": res.provider}
+        keep, sents = x.get("keep") or {}, sentences.get(cid, [])
+        i, j = int(keep.get("from", 0)) - 1, int(keep.get("to", 0)) - 1
+        if 0 <= i <= j < len(sents) and lo - 0.5 <= sents[j].end - sents[i].start <= hi + 0.5:
+            item["_bounds"] = (sents[i].start, sents[j].end)
+        out[cid] = item
+    return out
+
+
+def _retrim(cand: Candidate, camp: Campaign | None, start: float, end: float) -> Candidate:
+    """Move a candidate to new bounds (the critic's tighter cut), re-scored and re-checked."""
+    ev = _evaluate_span(cand.source_id, camp, start, end)
+    with db.session() as s:
+        row = s.get(Candidate, cand.id)
+        assert row is not None
+        explanations = dict(row.score_explanations or {})
+        explanations.update(heuristic=ev["why"], heuristic_scores=ev["scores"],
+                            critic_trim={"from": [round(row.start, 2), round(row.end, 2)],
+                                         "to": [ev["start"], ev["end"]]})
+        row.start, row.end, row.transcript = ev["start"], ev["end"], ev["win"].text
+        row.features = {k: v for k, v in ev["f"].items() if k != "vocab"}
+        row.speakers, row.content_score, row.score_explanations = ev["f"]["speakers"], ev["content"], explanations
+        row.compliance_status, row.compliance_reasons = ev["comp"]["status"], ev["comp"]["reasons"]
+        for k, v in ev["scores"].items():
+            setattr(row, FACTOR_COLUMNS[k], v)
+    return get(cand.id)
 
 
 def rank(source_id: int | None = None, campaign: str | int | None = None, candidate_ids: list[int] | None = None,
@@ -391,6 +468,12 @@ def rank(source_id: int | None = None, campaign: str | int | None = None, candid
     scored: list[dict[str, Any]] = []
     for c in cands:
         camp = camps.get(c.campaign_id) if c.campaign_id else None
+        bounds = (critique.get(c.id) or {}).get("_bounds")
+        if bounds and (abs(bounds[0] - c.start) > 0.4 or abs(bounds[1] - c.end) > 0.4):
+            try:
+                c = _retrim(c, camp, *bounds)
+            except ValueError:
+                pass
         weights = campaigns.normalized_weights(camp.weights if camp else None)
         heur = (c.score_explanations or {}).get("heuristic_scores") or {k: getattr(c, FACTOR_COLUMNS[k]) or 50
                                                                          for k in FACTORS}
