@@ -16,6 +16,7 @@ from . import campaigns, db, revenue
 from .analytics import insights, metrics
 from .clipping import clips, sources
 from .config import ensure_dirs, settings
+from .pipeline import fit
 
 app = typer.Typer(no_args_is_help=True, add_completion=False,
                   help="Local clipping operator: campaign footage in, approved clips out.")
@@ -176,7 +177,7 @@ def copy(campaign: str, agent: Optional[str] = None, platforms: Optional[str] = 
     plats = [p.strip() for p in platforms.split(",")] if platforms else spec.platforms
     with console.status("agent writing copy…") as st:
         out = runner.run(prompts.WRITE_COPY.format(campaign=campaign, clip_ids=ids, platforms=plats),
-                         agent, on_event=lambda m: st.update(m))
+                         agent, on_event=lambda m: st.update(fit(console, m)))
     console.print(out)
 
 
@@ -263,7 +264,7 @@ def insights_cmd(campaign: Optional[str] = None, min_n: int = 3,
         clause = f', campaign="{campaign}"' if campaign else ""
         with console.status("agent analysing…") as st:
             out = runner.run(prompts.ANALYZE.format(min_n=min_n, campaign_clause=clause), agent,
-                             on_event=lambda m: st.update(m))
+                             on_event=lambda m: st.update(fit(console, m)))
         console.print(out)
         return
     a = insights.analyze(campaign, min_n)

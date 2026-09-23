@@ -61,3 +61,10 @@ def test_parse_selection():
     assert pipeline.parse_selection("1-3", 3) == [0, 1, 2]
     assert pipeline.parse_selection("", 3) == []
     assert pipeline.parse_selection("all", 2) == [0, 1]
+
+
+def test_status_lines_fit_the_terminal():
+    narrow = Console(width=40)
+    line = pipeline.fit(narrow, "agent: reading transcript (source 1, from 1234s) and more words")
+    assert len(line) <= 34 and line.endswith("…")
+    assert pipeline.fit(narrow, "short") == "short"

@@ -37,6 +37,14 @@ class RunOptions:
     extra: dict = field(default_factory=dict)
 
 
+def fit(console: Console, text: str) -> str:
+    """One status line, never wider than the terminal: a spinner line that wraps
+    gets reprinted on every refresh instead of redrawn in place."""
+    room = max(console.width - 6, 10)
+    text = " ".join(text.split())
+    return text if len(text) <= room else text[: room - 1] + "…"
+
+
 def parse_selection(answer: str, n: int) -> list[int]:
     """'1,2' / '1 3' / '1-3' / 'all' / '' → zero-based indexes."""
     answer = answer.strip().lower()
@@ -75,7 +83,7 @@ def run(campaign_ref: str, opts: RunOptions, console: Console | None = None,
     def default_agent(prompt: str) -> str:
         with console.status("[dim]agent working…[/]") as status:
             return agent_runner.run(prompt, opts.agent, opts.model,
-                                    on_event=lambda m: status.update(f"[dim]agent: {m}[/]"))
+                                    on_event=lambda m: status.update(f"[dim]{fit(console, 'agent: ' + m)}[/]"))
 
     agent = agent or default_agent
     camp = campaigns.get(campaign_ref)
@@ -97,7 +105,7 @@ def run(campaign_ref: str, opts: RunOptions, console: Console | None = None,
         for src in sources.list_for(slug):
             if not any(c["origin"] == "openshorts" for c in clips.list_clips(slug) if c["source_id"] == src["id"]):
                 with console.status("[dim]OpenShorts processing…[/]") as st:
-                    openshorts.run(src["id"], on_log=lambda l: st.update(f"[dim]OpenShorts: {l[:80]}[/]"))
+                    openshorts.run(src["id"], on_log=lambda l: st.update(f"[dim]{fit(console, 'OpenShorts: ' + l)}[/]"))
 
     needs_agent = any(s["n_clips"] == 0 for s in sources.list_for(slug)) or clips.list_clips(slug, "candidate")
     if needs_agent:
