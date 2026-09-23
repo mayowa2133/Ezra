@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     whisper_device: str = "auto"
     whisper_compute: str = "int8"
     whisper_batch: int = 8
+    whisper_prompt: str | None = Field(None, description="Initial prompt, e.g. 'Um, uh, like' to keep disfluencies")
+    model_cache: Path | None = Field(None, description="Where ML models are cached; default $EZRA_HOME/cache/models")
     diarizer: str = Field("local", description="local | pyannote | none")
     face_detector: str = Field("haar", description="haar | mediapipe")
     llm: str = Field("heuristic", description="heuristic | claude-cli | codex-cli | openai-compatible")
@@ -67,6 +69,10 @@ class Settings(BaseSettings):
     @property
     def cache_dir(self) -> Path:
         return self.home / "cache"
+
+    @property
+    def models_dir(self) -> Path:
+        return (self.model_cache or self.cache_dir / "models").expanduser()
 
     @property
     def storage_dir(self) -> Path:
