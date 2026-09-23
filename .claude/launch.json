@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ezra-api",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "EZRA_HOME=${EZRA_DEMO_HOME:-$PWD/data} uv run ezra serve --port 8000"],
+      "port": 8000
+    },
+    {
+      "name": "ezra-web",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd apps/web && npm run dev"],
+      "port": 3000
+    }
+  ]
+}
