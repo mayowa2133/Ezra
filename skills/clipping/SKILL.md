@@ -22,7 +22,8 @@ publishes and does the revenue math. Every judgment is yours; every irreversible
    - end right after the payoff.
    - it must make sense to someone who never saw the episode.
    - `hook_text`: the on-screen card, max ~10 words, in the speaker's voice.
-   - `hook_type` from the brief's list, `framing`: `crop` for one speaker, `blur` for wide/two-shot.
+   - `hook_type` from the brief's list, `framing`: `crop` (follows the speaker's face shot by shot)
+     for one speaker on screen at a time, `blur` when two people share the frame for the whole clip.
    Check every returned `opens_with` and `ends_with`. If the first words aren't the hook, or the
    cut stops before the payoff (`warnings` flags mid-sentence endings), add a corrected cut.
    Candidates with `compliance_issues` were rejected by code; don't re-propose them unchanged.

@@ -13,10 +13,11 @@ by the agent driving the `clipper` MCP server: Claude Code, Codex, or a headless
 |---|---|
 | `src/clipper/campaigns.py` | Campaign YAML → `CampaignSpec`, rubric weights (renormalised), upsert/lookup by slug |
 | `src/clipper/clipping/sources.py` | Footage per campaign, ffprobe duration, optional yt-dlp download |
-| `src/clipper/clipping/transcribe.py` | Local faster-whisper with word timestamps (`uv sync --extra local`) |
-| `src/clipper/clipping/transcript.py` | Transcript JSON, paging for agents, **snapping cuts to word edges**, token joining |
+| `src/clipper/clipping/transcribe.py` | Local faster-whisper (batched by default) with word timestamps (`uv sync --extra local`) |
+| `src/clipper/clipping/transcript.py` | Transcript JSON, sentence re-segmentation, paging for agents, **snapping cuts to word edges**, token joining |
 | `src/clipper/clipping/clips.py` | Clip lifecycle and status machine (candidate → scored → rendered → approved → published) |
 | `src/clipper/clipping/render.py` | ffmpeg 1080x1920 render; captions/hook card drawn with Pillow and overlaid (no libass needed) |
+| `src/clipper/clipping/framing.py` | Speaker tracking: face detection (OpenCV Haar, bundled) → steady per-shot crop positions |
 | `src/clipper/ranking/rubric.py` | The judging brief: rules, rubric dimensions and weights, hook types, learnings |
 | `src/clipper/ranking/scoring.py` | `ClipScore` and the weighted `ai_score` (weights applied here, never by the agent) |
 | `src/clipper/ranking/compliance.py` | Deterministic campaign checks on clips and on copy |

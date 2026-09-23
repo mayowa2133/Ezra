@@ -57,7 +57,8 @@ Tracking enabled.
  │                                      │ ◀───── │ proposes ~20 moments                  │
  │ snap to word edges, compliance check │ ─────▶ │ scores each on the rubric,            │
  │ weight scores → ai_score             │ ◀───── │ comparing them against each other     │
- │ render top N (ffmpeg 9:16 + captions)│        │                                      │
+ │ render top N: 9:16 crop that follows │        │                                      │
+ │ the speaker's face, burned captions  │        │                                      │
  │ ─── you approve in the terminal ───  │        │                                      │
  │ hashtag / rule gate on copy          │ ◀───── │ writes per-platform copy              │
  │ ─── you confirm publishing ───       │        │                                      │
@@ -88,7 +89,7 @@ Default rubric (override per campaign):
 Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), ffmpeg, and Claude Code (`claude`) or Codex (`codex`) signed in.
 
 ```bash
-uv sync --extra local                 # clipper + faster-whisper
+uv sync --extra local                 # clipper + faster-whisper + OpenCV (face tracking)
 cp .env.example .env                  # add Upload-Post keys when you want to publish
 uv run clipper init
 ```
@@ -111,7 +112,7 @@ Step by step, if you want control:
 | `clipper transcribe <source_id>` | Local Whisper transcription with word timestamps |
 | `clipper run <campaign> [--candidates 20 --render 5 --agent codex --openshorts --no-publish]` | The full loop |
 | `clipper clips <campaign> [--status scored]` | Ranked clips |
-| `clipper render <clip_id>... [--framing blur --crop-x 0.3]` | Re-render with different framing |
+| `clipper render <clip_id>... [--framing blur --crop-x 0.3]` | Re-render; the crop follows the speaker unless you pin `--crop-x` |
 | `clipper review <campaign>` | Approve or reject rendered clips |
 | `clipper copy <campaign>` | Agent writes platform copy for approved clips |
 | `clipper publish <campaign> [--dry-run --schedule 2026-10-01T18:00]` | Post approved clips (asks first) |
@@ -131,7 +132,8 @@ forbidden and required items, hashtags, platforms, a free-text brief and optiona
 ## Optional: OpenShorts
 
 [OpenShorts](https://github.com/mutonby/openshorts) (MIT) can run alongside as a second opinion and a better
-renderer: face tracking and split-screen layouts. `clipper run --openshorts` sends each source through a
+renderer: active-speaker detection and split-screen layouts (clipper's own crop follows the most
+prominent face, shot by shot). `clipper run --openshorts` sends each source through a
 self-hosted OpenShorts and imports its moments as candidates. Your agent scores them against its own picks.
 When an OpenShorts moment wins, `--framing openshorts` reuses its render. Start it with
 `docker compose --profile openshorts up -d`. It needs its own picker model: a Gemini key, or a local Ollama.

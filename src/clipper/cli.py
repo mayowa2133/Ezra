@@ -111,7 +111,7 @@ def run(
     agent: Optional[str] = typer.Option(None, help="claude (default) or codex"),
     model: Optional[str] = typer.Option(None, help="Model alias passed to the agent CLI"),
     openshorts: bool = typer.Option(False, help="Also run the source through a self-hosted OpenShorts"),
-    framing: Optional[str] = typer.Option(None, help="crop | blur | openshorts (default: the agent's pick)"),
+    framing: Optional[str] = typer.Option(None, help="crop (follows the speaker) | blur | openshorts (default: the agent's pick)"),
     no_publish: bool = typer.Option(False, "--no-publish", help="Stop after approval and copy"),
 ) -> None:
     """Footage → candidates → scores → renders → your approval → copy → publish."""
