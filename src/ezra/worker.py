@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -88,6 +89,19 @@ def run_forever(kinds: list[str] | None = None, once: bool = False) -> None:
         time.sleep(s.worker_poll_seconds)
 
 
+NOISY = ("alembic", "httpx", "faster_whisper", "pyscenedetect", "huggingface_hub", "filelock", "urllib3")
+
+
+def quiet_libraries() -> None:
+    """Media/ML libraries log progress and hints at INFO/WARNING through their own
+    handlers (PySceneDetect, huggingface_hub's "unauthenticated requests" hint).
+    Progress belongs in the job record, so keep them to real errors."""
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    for name in NOISY:
+        logging.getLogger(name).setLevel(logging.ERROR)
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="ezra-worker")
     ap.add_argument("--run-job", type=int, help="internal: execute one claimed job in this process")
@@ -97,11 +111,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.run_job:
         # child of a worker or CLI: progress and logs go to the job record, not the terminal
         logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s %(message)s")
+        quiet_libraries()
         jobs.run(jobs.get(args.run_job))
         return
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    for noisy in ("alembic", "httpx", "faster_whisper", "pyscenedetect"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    quiet_libraries()
     db.migrate()
     run_forever(kinds=args.kinds.split(",") if args.kinds else None, once=args.once)
 

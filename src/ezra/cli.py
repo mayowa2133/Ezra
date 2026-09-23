@@ -681,8 +681,18 @@ def run(campaign: str, top: int = 5, max_candidates: int = 40,
                                    "autonomous": autonomous}, queue, f"run {campaign}", dedupe_key=f"run-{campaign}")
     if queue:
         return
-    console.print(f"{out['sources']} sources · {out['candidates']} candidates ({out['publishable']} publishable) · "
+    console.print(f"{out['sources']} source(s) · {out['candidates']} candidates ({out['publishable']} publishable) · "
                   f"rendered {len(out['rendered'])} · review queue {out['review_queue']}")
+    cards = [c for c in review.queue(campaign) if c["clip_id"] in set(out["rendered"])]
+    if cards:
+        t = Table("clip", "rank", "dur", "layout", "compliance", "EV/post", "opens with", title="ready for review")
+        for c in cards:
+            cand, ev = c["candidate"], c["expected_value"] or {}
+            t.add_row(str(c["clip_id"]), f"{cand.get('rank_score') or 0:.1f}", f"{c['duration'] or 0:.0f}s",
+                      str(c["layout"]), c["compliance"]["status"],
+                      "-" if ev.get("ev_per_post") is None else f"${ev['ev_per_post']:,.2f}",
+                      f"\"{(cand.get('opens_with') or cand.get('transcript') or '')[:60]}\"")
+        console.print(t)
     if "autonomous" in out:
         console.print(f"autonomous: {out['autonomous']}")
     console.print("next: `ezra review` (or the dashboard /review)")
@@ -755,7 +765,9 @@ def main() -> None:
     from .publishing.base import PublishError
     from .secrets import SecretError
     from .storage import StorageError
+    from .worker import quiet_libraries
 
+    quiet_libraries()
     try:
         rc = app(standalone_mode=False)
         if isinstance(rc, int) and rc:
