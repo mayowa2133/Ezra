@@ -5,7 +5,8 @@ Captions and the hook card are drawn with Pillow and composited with ffmpeg's
 (Homebrew's default ffmpeg has neither).
 
 Framing:
-  crop  fill the frame, crop horizontally at `crop_x` (0 = left, 0.5 = centre, 1 = right)
+  crop  fill the frame. With no `crop_x`, the crop follows the speaker's face shot by shot
+        (clipping.framing); a number pins it (0 = left, 0.5 = centre, 1 = right)
   blur  whole frame fitted to the width over a blurred fill (safe for two-person shots)
 """
 
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from . import framing as speaker_framing
 from .transcript import Transcript, Word, join_words
 
 W, H = 1080, 1920
@@ -123,8 +125,9 @@ def hook_png(text: str, path: Path, font_path: str | None = None) -> None:
     img.save(path)
 
 
-def build_command(src: str, out: Path, start: float, end: float, framing: str, crop_x: float,
+def build_command(src: str, out: Path, start: float, end: float, framing: str, crop_x: float | str,
                   overlays: list[tuple[Path, float, float, int]]) -> list[str]:
+    """`crop_x` is a 0-1 position, or a ready ffmpeg x expression (speaker tracking)."""
     dur = end - start
     if framing == "blur":
         base = ("[0:v]split[a][b];"
@@ -132,9 +135,12 @@ def build_command(src: str, out: Path, start: float, end: float, framing: str, c
                 f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
                 "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v0]")
     else:
-        x = min(max(crop_x, 0.0), 1.0)
+        if isinstance(crop_x, str):
+            x_expr = crop_x
+        else:
+            x_expr = f"(iw-ow)*{min(max(crop_x, 0.0), 1.0):.3f}"
         base = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
-                f"crop={W}:{H}:(iw-ow)*{x:.3f}:(ih-oh)/2,setsar=1[v0]")
+                f"crop={W}:{H}:'{x_expr}':(ih-oh)/2,setsar=1[v0]")
     parts = [base]
     inputs = ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", src]
     for i, (png, a, b, y) in enumerate(overlays, start=1):
@@ -148,9 +154,14 @@ def build_command(src: str, out: Path, start: float, end: float, framing: str, c
 
 
 def render(src: str, out: Path, start: float, end: float, transcript: Transcript | None,
-           framing: str = "crop", crop_x: float = 0.5, captions: bool = True,
+           framing: str = "crop", crop_x: float | None = None, captions: bool = True,
            hook_text: str | None = None, font_path: str | None = None) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
+    x: float | str = 0.5 if crop_x is None else crop_x
+    if framing == "crop" and crop_x is None:
+        shots = speaker_framing.auto_shots(src, start, end)
+        if shots and not (len(shots) == 1 and shots[0].x == 0.5):
+            x = speaker_framing.crop_x_expr(shots)
     with tempfile.TemporaryDirectory(prefix="clipper-") as tmp:
         tmpdir = Path(tmp)
         overlays: list[tuple[Path, float, float, int]] = []
@@ -163,7 +174,7 @@ def render(src: str, out: Path, start: float, end: float, transcript: Transcript
                 p = tmpdir / f"cap{i:04d}.png"
                 caption_png(cap.text, p, font_path)
                 overlays.append((p, cap.start, cap.end, CAPTION_Y))
-        cmd = build_command(src, out, start, end, framing, crop_x, overlays)
+        cmd = build_command(src, out, start, end, framing, x, overlays)
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg failed: {result.stderr.strip()[-800:]}")

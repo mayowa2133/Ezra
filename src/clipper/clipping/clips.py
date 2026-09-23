@@ -144,7 +144,8 @@ def update(clip_id: int, **fields: Any) -> None:
                      (*fields.values(), db.now(), clip_id))
 
 
-def render_clip(clip_id: int, framing: str | None = None, crop_x: float = 0.5) -> dict[str, Any]:
+def render_clip(clip_id: int, framing: str | None = None, crop_x: float | None = None) -> dict[str, Any]:
+    """crop_x None = follow the speaker (face tracking); a number pins the crop."""
     clip = get(clip_id)
     if clip["status"] == "rejected_compliance":
         raise ValueError(f"clip {clip_id} failed compliance: {clip['compliance_issues']}")

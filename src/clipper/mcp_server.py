@@ -154,10 +154,11 @@ def get_clip(clip_id: int) -> dict[str, Any]:
 
 @server.tool()
 def render_clips(campaign: str | None = None, clip_ids: list[int] | None = None, top_n: int = 5,
-                 framing: str | None = None, crop_x: float = 0.5) -> dict[str, Any]:
+                 framing: str | None = None, crop_x: float | None = None) -> dict[str, Any]:
     """Render clips to 1080x1920 with burned-in captions, in the background. Either give
-    clip_ids, or a campaign to render its top_n scored clips. framing: crop | blur |
-    openshorts (reuse OpenShorts' render for OpenShorts-origin clips)."""
+    clip_ids, or a campaign to render its top_n scored clips. framing: crop (follows the
+    speaker's face; pass crop_x 0-1 to pin it instead) | blur | openshorts (reuse
+    OpenShorts' render for OpenShorts-origin clips)."""
     if clip_ids is None:
         if campaign is None:
             raise ValueError("give clip_ids or campaign")

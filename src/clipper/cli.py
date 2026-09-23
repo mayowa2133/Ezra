@@ -138,7 +138,7 @@ def clips_list(campaign: str, status: Optional[str] = None, limit: int = 30) -> 
 
 @app.command("render")
 def render_cmd(clip_ids: list[int], framing: Optional[str] = None,
-               crop_x: float = typer.Option(0.5, help="Crop position 0=left .. 1=right")) -> None:
+               crop_x: Optional[float] = typer.Option(None, help="Pin the crop 0=left .. 1=right (default: follow the speaker)")) -> None:
     """Render specific clips (re-render with different framing, for example)."""
     for cid in clip_ids:
         c = clips.render_clip(cid, framing, crop_x)
