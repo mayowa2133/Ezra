@@ -43,7 +43,8 @@ Bugs found and fixed along the way, beyond quality:
 | 12 | Last goodbye — then cops came out of nowhere | 24 s | shifted 4.5 s later |
 | 13 | We're sneaking into the police station | 22 s | as scouted |
 
-Letterboxed ("blur") screen time is about 22% across these clips; the rest fills the vertical frame.
+Letterboxed ("blur") screen time is 28% across these clips (measured; 22% in iteration 5, whose
+selection differed); the rest fills the vertical frame.
 
 Runtime for the 20.5-minute source: 8.5 minutes end to end. That covers transcription and analysis,
 critic scoring of 25 candidates in 5 parallel batches, and 8 renders.
@@ -54,7 +55,7 @@ Regression check after the changes: full test suite (80 passed) and the four-fix
 ## What this can and can't tell you
 
 - It shows the clips have the **structure** of high-performing ones: a standalone hook in the first
-  seconds, one story, 16–56 s, a filled vertical frame, synced captions, no ads, no duplicates.
+  seconds, one story, 16–38 s, a mostly filled vertical frame, synced captions, no ads, no duplicates.
 - It **can't** tell you views. That needs publishing and `ezra insights` over ~20 posts.
 - Model-critic rankings vary a little between runs (iterations 4 and 5 picked overlapping but not
   identical top 8s).
