@@ -36,6 +36,16 @@ class Candidate(BaseModel):
     framing: str = Field("crop", description="crop (single speaker) or blur (wide / two-person shot)")
 
 
+def edges(text: str | None, n: int = 12) -> dict[str, Any]:
+    """The words a cut opens and closes on, plus a warning when it stops mid-sentence
+    (the payoff is usually the last line, so a clipped ending costs completion rate)."""
+    words = (text or "").split()
+    warnings = []
+    if words and not words[-1].rstrip("\"')”’").endswith((".", "?", "!")):
+        warnings.append("ends mid-sentence: extend `end` to the end of the sentence")
+    return {"opens_with": " ".join(words[:n]), "ends_with": " ".join(words[-n:]), "warnings": warnings}
+
+
 def _get(conn, clip_id: int) -> dict[str, Any]:
     row = conn.execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
     if row is None:
@@ -79,7 +89,7 @@ def add_candidates(source_id: int, candidates: list[Candidate], origin: str = "a
                  c.framing if c.framing in ("crop", "blur", "openshorts") else "crop",
                  status, db.now(), db.now()))
             out.append({"clip_id": cur.lastrowid, "title": c.title, "start": start, "end": end,
-                        "duration": round(end - start, 1), "opens_with": " ".join(text.split()[:12]),
+                        "duration": round(end - start, 1), **edges(text),
                         "compliance_issues": issues, "status": status})
     return out
 

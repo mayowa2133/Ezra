@@ -23,7 +23,8 @@ publishes and does the revenue math. Every judgment is yours; every irreversible
    - it must make sense to someone who never saw the episode.
    - `hook_text`: the on-screen card, max ~10 words, in the speaker's voice.
    - `hook_type` from the brief's list, `framing`: `crop` for one speaker, `blur` for wide/two-shot.
-   Check every returned `opens_with`. If the first words aren't the hook, add a corrected cut.
+   Check every returned `opens_with` and `ends_with`. If the first words aren't the hook, or the
+   cut stops before the payoff (`warnings` flags mid-sentence endings), add a corrected cut.
    Candidates with `compliance_issues` were rejected by code; don't re-propose them unchanged.
 5. `score_clips([...])` for every candidate, **comparatively**. Score each rubric dimension 0-100 and
    use the whole range. In `notes`, say why a clip beats or loses to its neighbours ("#7 opens with
@@ -49,5 +50,5 @@ publishes and does the revenue math. Every judgment is yours; every irreversible
 ## Never
 
 - approve, reject or publish without the human's explicit choice in this conversation;
-- change timestamps in your head: clipper snaps them, so trust `opens_with`, not your estimate;
+- change timestamps in your head: clipper snaps them, so trust `opens_with` / `ends_with`, not your estimate;
 - pre-weight scores: score each dimension honestly and let clipper apply the campaign weights.

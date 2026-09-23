@@ -109,3 +109,15 @@ def test_caption_overlays_never_overlap():
                         [(Path("a.png"), 0.0, 1.5, 100), (Path("b.png"), 1.5, 3.0, 100)])
     graph = cmd[cmd.index("-filter_complex") + 1]
     assert "between(" not in graph and "lt(t,1.500)" in graph and "gte(t,1.500)" in graph
+
+
+def test_edges_flag_mid_sentence_endings(campaign):
+    from clipper.clipping.clips import edges
+    assert edges("I almost quit. Talk to the one person who believes")["warnings"]
+    ok = edges("Talk to the one person who believes in the company more than you do.")
+    assert ok["warnings"] == [] and ok["ends_with"].endswith("more than you do.")
+    short, full = clips.add_candidates(campaign["source"]["id"], [
+        Candidate(start=0, end=16.9, title="stops one word early"),
+        Candidate(start=0, end=17.4, title="complete sentence")])
+    assert short["ends_with"].endswith("product market") and short["warnings"]
+    assert full["ends_with"].endswith("market fit.") and full["warnings"] == []

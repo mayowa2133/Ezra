@@ -8,8 +8,9 @@ FIND_AND_JUDGE = """You are the clip strategist for campaign `{campaign}`, worki
    rubric and the learnings from past performance.
 2. Call list_sources. For every transcribed source with n_clips == 0: read the ENTIRE transcript
    with read_transcript (page with next_start until it is null), then call add_candidates with
-   about {n} moments spread across the episode. Check each returned `opens_with`; if a cut does
-   not open on its hook, add a corrected version.
+   about {n} moments spread across the episode. Check each returned `opens_with` and `ends_with`:
+   if a cut does not open on its hook, or stops before its payoff (see `warnings`), add a
+   corrected version.
 3. Call list_clips(campaign="{campaign}", status="candidate") and score EVERY unscored candidate with
    score_clips. Compare clips against each other, not in isolation: if #7 is better than #4, the
    scores must say so. Put the comparison in `notes` (what the opening does, whether it stands

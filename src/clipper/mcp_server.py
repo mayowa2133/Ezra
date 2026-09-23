@@ -29,7 +29,8 @@ Workflow for a campaign:
  2. list_sources(campaign). Any source not 'transcribed': transcribe_source, then poll job_status.
  3. read_transcript(source_id), paging with next_start until None. Read the WHOLE episode.
  4. add_candidates(source_id, [...]): about 20 moments per source. Check each returned
-    `opens_with`: if the cut does not open on the hook, add a corrected candidate.
+    `opens_with` and `ends_with`: if a cut does not open on the hook or stops before the
+    payoff (see `warnings`), add a corrected candidate.
  5. score_clips([...]): score every candidate on every rubric dimension, comparing them
     against each other. clipper applies the weights.
  6. render_clips(campaign, top_n=5), then poll job_status.
@@ -48,7 +49,7 @@ def _clip_view(c: dict[str, Any]) -> dict[str, Any]:
         "clip_id": c["id"], "status": c["status"], "ai_score": c["ai_score"], "title": c["title"],
         "source_id": c["source_id"], "start": c["start_time"], "end": c["end_time"],
         "duration": round(c["end_time"] - c["start_time"], 1), "hook_type": c["hook_type"],
-        "hook_text": c["hook_text"], "opens_with": c["opening_words"], "origin": c["origin"],
+        "hook_text": c["hook_text"], **clips.edges(c["transcript"]), "origin": c["origin"],
         "compliance_issues": db.loads(c["compliance_issues"], []), "judge_notes": c["judge_notes"],
         "video_path": c["video_path"], "render_error": c["render_error"],
         "has_copy": bool(c["copy_json"]),
@@ -122,7 +123,8 @@ def get_brief(campaign: str, n_candidates: int = 20) -> dict[str, Any]:
 @server.tool()
 def add_candidates(source_id: int, candidates: list[Candidate]) -> list[dict[str, Any]]:
     """Propose clip moments. Boundaries snap to word edges; deterministic campaign checks
-    run immediately. Returns each clip_id, its final bounds and the words it opens with."""
+    run immediately. Returns each clip_id, its final bounds, the words it opens and ends
+    with, and warnings such as an ending that stops mid-sentence."""
     return clips.add_candidates(source_id, candidates)
 
 
