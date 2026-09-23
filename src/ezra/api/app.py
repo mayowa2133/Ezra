@@ -688,9 +688,13 @@ def integrations() -> dict[str, Any]:
     from ..publishing.providers import PUBLISHERS
 
     have = set(secrets.refs())
+    # the credential each publisher needs before it can post (local-export needs none)
+    needs = {n: p.client_secret_ref or ("upload-post" if n == "upload-post" else None) for n, p in PUBLISHERS.items()}
     return {"publishers": [{"provider": n, "platforms": list(p.platforms),
                             "oauth": p.client_secret_ref is not None,
-                            "configured": p.client_secret_ref is None or p.client_secret_ref in have}
+                            "configured": needs[n] is None or needs[n] in have,
+                            "secret_ref": needs[n],
+                            "env_var": secrets.ENV_ALIASES.get(needs[n] or "") if needs[n] else None}
                            for n, p in PUBLISHERS.items()],
             "secrets_present": sorted(have), "accounts": accounts(),
             "llm": get_settings().llm, "transcriber": get_settings().transcriber,

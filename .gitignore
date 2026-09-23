@@ -10,3 +10,6 @@ output/
 *.mkv
 !tests/fixtures/*.mp4
 .DS_Store
+
+# benchmark working directories (DBs, renders); reports are kept
+benchmarks/results/*/homes/

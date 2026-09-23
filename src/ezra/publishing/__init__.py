@@ -67,7 +67,10 @@ def add_account(platform: str, provider: str, handle: str, credential_ref: str |
         if acc is None:
             acc = PublishAccount(platform=platform, provider=provider, handle=handle)
             s.add(acc)
-        acc.provider, acc.credential_ref, acc.timezone, acc.meta = provider, credential_ref, tz, meta or {}
+        # updating an account merges: an omitted credential or meta key keeps what OAuth stored
+        acc.provider, acc.timezone = provider, tz
+        acc.credential_ref = credential_ref or acc.credential_ref
+        acc.meta = {**(acc.meta or {}), **(meta or {})}
         acc.status = "connected"
         s.flush()
         return acc

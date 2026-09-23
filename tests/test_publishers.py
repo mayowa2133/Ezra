@@ -239,3 +239,11 @@ def test_tiktok_multi_chunk_ranges(tmp_path):
     assert init_body["total_chunk_count"] == 2 and init_body["chunk_size"] == c
     assert ranges == [f"bytes 0-{c - 1}/{size}", f"bytes {c}-{size - 1}/{size}"]
     assert res.status == "processing"
+
+
+def test_updating_an_account_keeps_oauth_credential_and_meta():
+    from ezra import publishing
+
+    a = publishing.add_account("tiktok", "tiktok", "me", credential_ref="tiktok:me", meta={"open_id": "o1"})
+    b = publishing.add_account("tiktok", "tiktok", "me", meta={"unaudited": False})
+    assert a.id == b.id and b.credential_ref == "tiktok:me" and b.meta == {"open_id": "o1", "unaudited": False}

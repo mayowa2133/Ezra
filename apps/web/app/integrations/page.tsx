@@ -6,7 +6,7 @@ import { ErrorNote } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 
 type Integrations = {
-  publishers: { provider: string; platforms: string[]; oauth: boolean; configured: boolean }[];
+  publishers: { provider: string; platforms: string[]; oauth: boolean; configured: boolean; env_var: string | null }[];
   secrets_present: string[];
   accounts: { id: number; platform: string; provider: string; handle: string; has_credential: boolean }[];
   llm: string; transcriber: string; diarizer: string; face_detector: string;
@@ -39,7 +39,7 @@ export default function IntegrationsPage() {
               <tbody>{data.publishers.map((p) => (
                 <tr key={p.provider}>
                   <td>{p.provider}</td><td>{p.platforms.join(", ")}</td>
-                  <td>{p.configured ? "configured" : <span className="muted">missing (see REMAINING_EXTERNAL_SETUP.md)</span>}</td>
+                  <td>{p.configured ? "configured" : <span className="muted">missing: set <code>{p.env_var}</code> (REMAINING_EXTERNAL_SETUP.md)</span>}</td>
                   <td>{p.oauth && <button disabled={!p.configured} onClick={() => connect(p.provider)}>Connect account</button>}</td>
                 </tr>
               ))}</tbody>

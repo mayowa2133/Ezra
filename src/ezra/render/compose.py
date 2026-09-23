@@ -86,14 +86,17 @@ def audio_energy(src: Path, t0: float, t1: float, rate: int = 16000) -> tuple[li
 
 
 LOUDNESS = {"I": -14.0, "TP": -1.5, "LRA": 11.0}    # short-form platforms normalise to about -14 LUFS
+# Speech has peaks far above its average loudness; without taming them, reaching -14 LUFS would
+# break the true-peak ceiling and loudnorm falls back to a dynamic mode that lands 1-2 LU low.
+VOICE_CHAIN = "acompressor=threshold=-24dB:ratio=4:attack=3:release=100,alimiter=limit=0.5:level=false"
 
 
 def loudnorm_filter(in_args: list[str]) -> str:
-    """Two-pass loudnorm: measure the clip's audio, then normalise linearly to the
-    target. Single-pass (dynamic) loudnorm undershoots short clips by 1-2 LU."""
+    """Voice compression, then two-pass loudnorm: measure the processed audio, then
+    normalise to the target with the measured values."""
     target = f"I={LOUDNESS['I']}:TP={LOUDNESS['TP']}:LRA={LOUDNESS['LRA']}"
     out = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", *in_args, "-vn", "-af",
-                          f"loudnorm={target}:print_format=json", "-f", "null", "-"],
+                          f"{VOICE_CHAIN},loudnorm={target}:print_format=json", "-f", "null", "-"],
                          capture_output=True, text=True, check=False)
     try:
         m = json.loads(out.stderr[out.stderr.rindex("{"):out.stderr.rindex("}") + 1])
@@ -101,10 +104,10 @@ def loudnorm_filter(in_args: list[str]) -> str:
                     f"measured_LRA={float(m['input_lra'])}:measured_thresh={float(m['input_thresh'])}:"
                     f"offset={float(m['target_offset'])}")
     except (ValueError, KeyError):   # silent or unmeasurable audio: fall back to single pass
-        return f"loudnorm={target}"
+        return f"{VOICE_CHAIN},loudnorm={target}"
     if not all(map(math.isfinite, (float(m["input_i"]), float(m["input_tp"])))):
-        return f"loudnorm={target}"
-    return f"loudnorm={target}:{measured}:linear=true"
+        return f"{VOICE_CHAIN},loudnorm={target}"
+    return f"{VOICE_CHAIN},loudnorm={target}:{measured}:linear=true"
 
 
 def cut_media(src: Path, pieces: list[edl.Piece], out: Path, has_audio: bool) -> Path:

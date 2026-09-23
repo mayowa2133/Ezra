@@ -495,9 +495,13 @@ def accounts_list() -> None:
 
 @accounts_app.command("add")
 def accounts_add(platform: str, provider: str, handle: str, credential_ref: str | None = None,
-                 tz: str = "UTC", export_dir: Path | None = None) -> None:
-    """Register an account (local-export needs no credential; upload-post uses UPLOAD_POST_API_KEY)."""
-    meta = {"dir": str(export_dir.resolve())} if export_dir else {}
+                 tz: str = "UTC", export_dir: Path | None = None,
+                 audited: bool = typer.Option(False, help="TikTok: the app passed TikTok's audit, "
+                                                          "so public posts are allowed")) -> None:
+    """Register or update an account (local-export needs no credential; upload-post uses UPLOAD_POST_API_KEY)."""
+    meta: dict[str, Any] = {"dir": str(export_dir.resolve())} if export_dir else {}
+    if audited:
+        meta["unaudited"] = False
     a = publishing.add_account(platform, provider, handle, credential_ref, tz, meta)
     console.print(f"account {a.id}: {a.platform} via {a.provider} @{a.handle}")
 
@@ -518,6 +522,7 @@ def secrets_set(ref: str, value: str = typer.Option(..., prompt=True, hide_input
     except json.JSONDecodeError:
         parsed = value
     secrets.put(ref, parsed)
+    audit.record("secret.stored", "secret", ref, actor="cli")   # the name only, never the value
     console.print(f"stored {ref}")
 
 
@@ -745,7 +750,27 @@ def benchmark(out: Path = typer.Option(Path("benchmarks/results"), help="Where t
 
 
 def main() -> None:
-    app()
+    """Expected failures (unknown id, bad input, missing credential, refused action) print one
+    line and exit 1; anything else keeps its traceback."""
+    from .publishing.base import PublishError
+    from .secrets import SecretError
+    from .storage import StorageError
+
+    try:
+        rc = app(standalone_mode=False)
+        if isinstance(rc, int) and rc:
+            raise SystemExit(rc)
+    except (LookupError, ValueError, PermissionError, SecretError, PublishError, StorageError) as e:
+        console.print(f"[red]error:[/] {str(e).strip(chr(39) + chr(34))}")
+        raise SystemExit(1) from None
+    except typer.Abort:
+        console.print("aborted")
+        raise SystemExit(1) from None
+    except Exception as e:
+        if hasattr(e, "show") and hasattr(e, "exit_code"):   # click usage errors (typer vendors click)
+            e.show()
+            raise SystemExit(e.exit_code) from None
+        raise
 
 
 if __name__ == "__main__":

@@ -177,11 +177,15 @@ def _silences(path: Path, min_len: float) -> list[tuple[float, float]]:
     return list(zip(starts, ends, strict=False))
 
 
-def _loudness(path: Path) -> float | None:
-    out = subprocess.run(["ffmpeg", "-nostats", "-i", str(path), "-af", "ebur128", "-f", "null", "-"],
+def _loudness(path: Path) -> tuple[float | None, float | None]:
+    """Integrated loudness (LUFS) and true peak (dBTP) per EBU R128."""
+    out = subprocess.run(["ffmpeg", "-nostats", "-i", str(path), "-af", "ebur128=peak=true", "-f", "null", "-"],
                          capture_output=True, text=True, check=False)
     found = re.findall(r"I:\s+(-?[\d.]+) LUFS", out.stderr)
-    return float(found[-1]) if found else None
+    summary = out.stderr[out.stderr.rfind("Summary"):]
+    peak = re.findall(r"Peak:\s+(-?[\d.]+|-inf) dBFS", summary)
+    return (float(found[-1]) if found else None,
+            float(peak[-1]) if peak and peak[-1] != "-inf" else None)
 
 
 def _srt(path: Path) -> list[tuple[float, float, str]]:
@@ -338,7 +342,7 @@ def eval_render(clip: Any, version: Any, st: Any, truth: dict[str, Any], src_sta
     v, a = streams.get("video", {}), streams.get("audio", {})
     num, den = (int(x) for x in v.get("r_frame_rate", "0/1").split("/"))
     vdur, adur = float(v.get("duration", 0)), float(a.get("duration", 0))
-    lufs = _loudness(path)
+    lufs, true_peak = _loudness(path)
     silences = _silences(path, 0.15)
     regions: list[tuple[float, float]] = []
     t = 0.0
@@ -374,7 +378,8 @@ def eval_render(clip: Any, version: Any, st: Any, truth: dict[str, Any], src_sta
         "h264_aac": v.get("codec_name") == "h264" and a.get("codec_name") == "aac",
         "fps_30": den > 0 and abs(num / den - 30) < 0.01,
         "av_sync_under_100ms": abs(vdur - adur) < 0.1,
-        "loudness_within_2lu_of_-14": lufs is not None and abs(lufs + 14) <= 2,
+        "loudness_within_1lu_of_-14": lufs is not None and abs(lufs + 14) <= 1,
+        "true_peak_at_most_-1dbtp": true_peak is not None and true_peak <= -1.0,
         "captions_over_speech_90pct": bool(over) and sum(over) / len(over) >= 0.9,
         "first_caption_within_400ms": bool(cues) and first_speech is not None and abs(cues[0][0] - first_speech) < 0.4,
         "no_silence_over_1s": not long_gaps,
@@ -384,7 +389,7 @@ def eval_render(clip: Any, version: Any, st: Any, truth: dict[str, Any], src_sta
         "clip_id": clip.id, "layout": version.layout_used, "duration": round(version.duration or 0, 2),
         "render_seconds": round(version.render_seconds or 0, 1),
         "width": v.get("width"), "height": v.get("height"), "fps": round(num / den, 3) if den else None,
-        "av_duration_diff": round(abs(vdur - adur), 3), "loudness_lufs": lufs,
+        "av_duration_diff": round(abs(vdur - adur), 3), "loudness_lufs": lufs, "true_peak_dbtp": true_peak,
         "captions": len(cues), "captions_over_speech": round(sum(over) / len(over), 3) if over else None,
         "first_caption_minus_first_speech": round(cues[0][0] - first_speech, 3) if cues and first_speech is not None
         else None,
@@ -693,11 +698,11 @@ def to_markdown(r: dict[str, Any]) -> str:
                     for i, t in enumerate(fx_[n]["candidates"]["top"])]
             out += [""]
         out += ["## Renders", "", _table(
-            ["fixture", "clip", "layout", "dur s", "render s", "A/V diff s", "LUFS", "captions over speech",
+            ["fixture", "clip", "layout", "dur s", "render s", "A/V diff s", "LUFS", "dBTP", "captions over speech",
              "1st caption − speech s", "silence removed s", "crop moves/min", "track on face", "split err",
              "all checks"],
             [[n, x["clip_id"], x["layout"], x["duration"], x["render_seconds"], x["av_duration_diff"],
-              x["loudness_lufs"], x["captions_over_speech"], x["first_caption_minus_first_speech"],
+              x["loudness_lufs"], x["true_peak_dbtp"], x["captions_over_speech"], x["first_caption_minus_first_speech"],
               x["removed_seconds"], x["crop_moves_per_min"], x["track_shots_on_a_face"], x["split_center_error"],
               x["passed"]] for n in names for x in fx_[n]["renders"]]), ""]
         failed = [(n, x["clip_id"], c) for n in names for x in fx_[n]["renders"]
