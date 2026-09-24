@@ -80,10 +80,11 @@ def test_layout_plan_modes():
     p = layout.plan(two, 10, [], "auto", "9:16", 2)[0]
     assert p.mode == "split" and p.split_x == (0.25, 0.75)
     assert layout.plan(two, 10, [], "auto", "16:9", 2)[0].mode == "track"   # split is vertical-only
-    assert layout.plan(none, 10, [], "auto", "9:16", 2)[0].mode == "blur"
+    assert layout.plan(none, 10, [], "auto", "9:16", 2)[0].mode == "center"   # vertical output always fills
+    assert layout.plan(none, 10, [], "auto", "16:9", 2)[0].mode == "blur"     # (landscape keeps it whole)
     assert layout.plan(one, 10, [], "auto", "9:16", 2, crop_x=0.1)[0].mode == "static"
     mixed = layout.plan(one[:10] + [(t / 2, []) for t in range(10, 20)], 10, [5.0], "auto", "9:16", 2)
-    assert [m.mode for m in mixed] == ["track", "blur"] and layout.summary(mixed) == "mixed:blur,track"
+    assert [m.mode for m in mixed] == ["track", "center"] and layout.summary(mixed) == "mixed:center,track"
     assert layout.x_expr([(0, 4, 0.3), (4, 8, 0.7)]).startswith("if(lt(t,4.000)")
     assert "ih-oh" in layout.x_expr([(0, 1, 0.5)], axis="y")
 
@@ -209,9 +210,11 @@ def test_faceless_scenes_follow_concentrated_motion_and_groups_follow_a_face():
     none: list = [(x, []) for x in t]
     p = layout.plan(none, 10, [], "auto", "9:16", 2.0, motion=runner)
     assert p[0].mode == "track" and abs(p[0].shots[0].x - 0.8) < 0.05
-    assert layout.plan(none, 10, [], "auto", "9:16", 2.0, motion=pan)[0].mode == "blur"   # long: show it all
-    short = layout.plan(none[:4], 2.0, [], "auto", "9:16", 2.0, motion=pan[:4])[0]
-    assert short.mode == "center" and short.shots[0].x == 0.5          # a fast cut fills the frame
+    assert layout.plan(none, 10, [], "auto", "9:16", 2.0, motion=pan)[0].mode == "center"  # action fills
+    static = [(x, None, 0.0) for x in t]                      # a text slide / graphic: nothing moves
+    assert layout.plan(none, 10, [], "auto", "9:16", 2.0, motion=static)[0].mode == "blur"  # long: whole
+    short = layout.plan(none[:4], 2.0, [], "auto", "9:16", 2.0, motion=static[:4])[0]
+    assert short.mode == "center" and short.shots[0].x == 0.5          # a brief one still fills
     group = [(x, [Face(0.2, .5, .08, .1), Face(0.5, .5, .15, .2), Face(0.8, .5, .08, .1)]) for x in t]
     g = layout.plan(group, 10, [], "auto", "9:16", 2.0)
     assert g[0].mode == "track" and abs(g[0].shots[0].x - 0.5) < 0.05     # the biggest (nearest) face

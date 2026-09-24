@@ -88,8 +88,14 @@ def _dominant(inside: list[list[Face]], ratio: float = 1.3) -> bool:
     return median(1.0 if w[1] <= 0 else w[0] / w[1] for w in frames) >= ratio
 
 
-MOTION_SHARE = 0.55
-SHORT_SHOT = 2.5      # seconds    # a faceless scene is tracked when most of its motion sits in one crop-width band
+MOTION_SHARE = 0.55   # a faceless scene is tracked when most of its motion sits in one crop-width band
+SHORT_SHOT = 2.5      # seconds: a static shot at least this long (graphic, slide) is shown whole
+
+
+def _is_static(motion: list[tuple[float, float | None, float]] | None, a: float, b: float) -> bool:
+    """Barely anything moves: a graphic, a text slide, a held establishing shot."""
+    inside = [x for t, x, _ in (motion or []) if a <= t < b]
+    return bool(inside) and sum(x is None for x in inside) >= 0.7 * len(inside)
 
 
 def _motion_samples(motion: list[tuple[float, float | None, float]] | None, a: float,
@@ -133,11 +139,15 @@ def plan(samples: list[tuple[float, list[Face]]], duration: float, scene_cuts: l
             mode = "static"
         elif requested == "auto":
             if n == 0:
-                # fill the frame with the action when it's clear where it is; a short faceless shot
-                # (fast-cut edits compose on-centre) fills from the centre, so the clip doesn't flip
-                # between full-frame and letterboxed every second; long ones (graphics, text,
-                # establishing aerials) are shown whole
-                mode = "track" if moving else ("center" if vertical and b - a < SHORT_SHOT else "blur")
+                # Top-performing vertical clips are never letterboxed (0% across 30 MrBeast Shorts
+                # with 100M+ views): follow the action when it's clear where it is, else fill from
+                # the centre. Only a long, static shot (a graphic or text slide) is shown whole.
+                if moving:
+                    mode = "track"
+                elif vertical and not (b - a >= SHORT_SHOT and _is_static(motion, a, b)):
+                    mode = "center"
+                else:
+                    mode = "blur"
             elif n == 2 and pair and vertical:
                 mode = "split"
             elif n >= 3 and not _dominant(inside):

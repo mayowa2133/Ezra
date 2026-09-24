@@ -58,6 +58,11 @@ THEMES: dict[str, dict[str, Any]] = {
     "minimal": {"weight": "regular", "size": 50, "case": "sentence", "fill": "#FFFFFF", "stroke": None,
                 "stroke_w": 0, "active": None, "mode": "chunk", "anim": "none", "words": 6, "position": 0.78,
                 "box": "#000000A6", "shadow": False},
+    # matched to top MrBeast Shorts: one or two words at a time, sentence case, white with a thin
+    # outline, mid-frame near the action, emphasis words (money, numbers, stakes) in colour
+    "pop": {"weight": "heavy", "size": 66, "case": "sentence", "fill": "#FFFFFF", "stroke": "#000000",
+            "stroke_w": 5, "active": None, "mode": "chunk", "anim": "pop", "words": 2, "position": 0.58,
+            "box": None, "shadow": False},
     "high-impact": {"weight": "heavy", "size": 104, "case": "upper", "fill": "#FFFFFF", "stroke": "#000000",
                     "stroke_w": 10, "active": "#FF3B30", "mode": "word", "anim": "pop", "words": 2,
                     "position": 0.62, "box": None, "shadow": False},

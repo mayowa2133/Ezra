@@ -12,6 +12,9 @@ from ..analysis.text import NUMBER, emotion_signals, tokens
 from ..transcription.base import Segment, Word, ends_sentence, join_words
 
 CONNECTOR_START = {"so", "and", "but", "or", "because", "anyway", "also", "then", "plus", "which", "like"}
+# openings that lean on what came before: "You know, we...", "Oh yeah, for those...", "The reason I..."
+DISCOURSE_START = {"you know", "oh yeah", "the reason", "like i", "i mean", "right so", "okay so", "yeah so",
+                   "anyway so", "as i", "as we", "so yeah"}
 DANGLING_START = {"he", "she", "they", "it", "that", "this", "those", "these", "him", "her", "them", "there"}
 FILLERS = {"um", "uh", "erm", "er", "hmm", "mm", "uhm", "ah"}
 # Sponsor / ad reads: clipping programmes pay for the creator's content, not their ads.
@@ -158,8 +161,10 @@ def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
     return {
         "duration": round(win.duration, 2), "n_words": n_words,
         "wpm": round(n_words / max(0.1, speech) * 60, 1) if speech else 0.0,
-        "dead_air_ratio": round((dead_air + long_gaps) / max(0.1, win.duration), 3),
-        "starts_with_connector": bool(first_tokens) and first_tokens[0] in CONNECTOR_START,
+        # quiet time only: a gap full of music, crashes or cheering is the action, not dead air
+        "dead_air_ratio": round((dead_air if silence is not None else long_gaps) / max(0.1, win.duration), 3),
+        "starts_with_connector": bool(first_tokens) and (first_tokens[0] in CONNECTOR_START
+                                                         or " ".join(first_tokens[:2]) in DISCOURSE_START),
         "starts_with_dangling": bool(first_tokens) and first_tokens[0] in DANGLING_START,
         "starts_with_filler": bool(first_tokens) and first_tokens[0] in FILLERS,
         "first_sentence_words": len(first.split()),
