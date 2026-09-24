@@ -207,7 +207,7 @@ class CaptionRenderer:
         self.pad = int(self.size * 0.35)
         self.max_w = int(width * (1 - safe.get("left", 0.05) - safe.get("right", 0.05)))
         self.line_h = int(self.size * 1.2)
-        self.band_h = self.line_h * 3 + 2 * self.pad
+        self.band_h = self.line_h * 3 + 2 * self.pad + (int(self.size * 1.2) if emoji else 0)
         centre = position or self.t["position"]
         lo = int(height * safe.get("top", 0.08))
         hi = int(height * (1 - safe.get("bottom", 0.15))) - self.band_h
@@ -281,7 +281,7 @@ class CaptionRenderer:
         y0 = (self.band_h - total_h) // 2 + dy
         mark = self.emoji[ci]
         if mark:
-            px = int(self.size * 1.15)
+            px = int(self.size * 1.9)
             icon = emoji_image(mark, px) if y0 - px - self.pad // 3 >= 0 else None
             if icon is not None:
                 img.alpha_composite(icon, (int((self.W - px) / 2), int(y0 - px - self.pad // 3)))

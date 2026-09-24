@@ -264,9 +264,11 @@ def test_caption_emoji_above_illustratable_words():
     off = captions.CaptionRenderer(words, "pop", 1080, 1920, {}, emoji=False)
     a = np.frombuffer(on.frame(0.2), np.uint8).reshape(on.band_h, 1080, 4)
     b = np.frombuffer(off.frame(0.2), np.uint8).reshape(off.band_h, 1080, 4)
-    top = slice(0, on.band_h // 3)
-    colourful = lambda x: int(((np.ptp(x[top, :, :3].astype(int), axis=2) > 60) & (x[top, :, 3] > 0)).sum())
-    assert colourful(a) > 500 and colourful(b) == 0            # a colour glyph above the words, only when on
+    def colourful_above_text(x, r):
+        top = slice(0, (r.band_h - r.line_h) // 2 - int(r.size * 0.3))    # rows above the caption line
+        return int(((np.ptp(x[top, :, :3].astype(int), axis=2) > 60) & (x[top, :, 3] > 0)).sum())
+
+    assert colourful_above_text(a, on) > 500 and colourful_above_text(b, off) == 0   # only when on
 
 
 def test_lulls_are_quiet_but_loud_action_is_not():
