@@ -276,3 +276,24 @@ def test_lulls_are_quiet_but_loud_action_is_not():
     loud = {"per_second": series, "median": -6.0, "p10": -9.0, "p90": -4.0}
     assert lulls(loud) == [(10.0, 13.0)]        # the 3 s dip; the loud burst and the 1 s dip at the end stay
     assert lulls(None) == []
+
+
+def test_edits_back_off_to_respect_the_minimum_length(monkeypatch):
+    from types import SimpleNamespace
+
+    from ezra import analysis, render
+    from ezra.render.spec import RenderSpec
+    from ezra.transcription.base import Word
+
+    words = [Word("go", 0.0, 1.0), Word("now", 8.0, 9.0), Word("run", 16.0, 17.0)]
+    cand = SimpleNamespace(start=0.0, end=17.0, source_id=1)
+    camp = SimpleNamespace(min_duration=15.0)
+    silence = SimpleNamespace(data={"regions": [{"start": 1.2, "end": 2.2}]})
+    monkeypatch.setattr(render, "quiet_regions", lambda sid: [(1.0, 8.0), (9.0, 16.0)])   # two long lulls
+    monkeypatch.setattr(analysis, "get", lambda sid, kind: silence if kind == "silence" else None)
+    quiet, rs = render._fit_edits(cand, camp, words, RenderSpec())
+    assert quiet == [(1.2, 2.2)] and rs.remove_silence          # lulls would leave ~3 s; silence only is fine
+    monkeypatch.setattr(render, "quiet_regions", lambda sid: [(1.0, 8.0), (9.0, 16.0)])
+    short = SimpleNamespace(min_duration=17.5)
+    quiet, rs = render._fit_edits(cand, short, words, RenderSpec())
+    assert quiet is None and not rs.remove_silence             # nothing may be cut

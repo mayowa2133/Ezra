@@ -68,6 +68,24 @@ def _record_render_compliance(cd: Candidate, check: dict[str, Any]) -> None:
     cd.compliance_status = "FAIL" if "fail" in outcomes else "REVIEW_REQUIRED" if "review" in outcomes else "PASS"
 
 
+def _fit_edits(cand: Candidate, camp: Any, words: list[Any],
+               rs: RenderSpec) -> tuple[list[tuple[float, float]] | None, RenderSpec]:
+    """Edits must not push a clip under the campaign's minimum length. Back off step by step:
+    cut silence and lulls, then only true silence, then nothing."""
+    from . import edl
+
+    full = quiet_regions(cand.source_id)
+    if not rs.remove_silence or camp is None or full is None:
+        return full, rs
+    sil = analysis.get(cand.source_id, "silence")
+    silence_only = [(float(r["start"]), float(r["end"])) for r in (sil.data.get("regions", []) if sil else [])]
+    for quiet in (full, silence_only):
+        pieces, _ = edl.build(words, cand.start, cand.end, True, rs.silence_threshold, rs.remove_fillers, quiet)
+        if edl.output_duration(pieces) >= camp.min_duration - 0.5:
+            return quiet, rs
+    return None, rs.model_copy(update={"remove_silence": False})
+
+
 def quiet_regions(source_id: int) -> list[tuple[float, float]] | None:
     """Detected silence plus sustained lulls (see analysis.quiet_regions)."""
     return analysis.quiet_regions(source_id)
@@ -77,9 +95,12 @@ def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None
                      progress: Progress | None = None) -> Clip:
     say = progress or (lambda f, m: None)
     cand = candidates.get(candidate_id)
-    if cand.compliance_status == "FAIL":
+    # only the moment itself can block a render; a render-stage failure (e.g. the last render came
+    # out too short) is what a new render is for
+    blocking = [r for r in (cand.compliance_reasons or []) if r.get("outcome") == "fail" and r.get("stage") != "render"]
+    if cand.compliance_status == "FAIL" and blocking:
         raise PermissionError(f"candidate {candidate_id} fails campaign compliance: "
-                              f"{'; '.join(r['message'] for r in cand.compliance_reasons)}")
+                              f"{'; '.join(r['message'] for r in blocking)}")
     rs = spec if isinstance(spec, RenderSpec) else _default_spec(cand, spec)
     camp = campaigns.get(cand.campaign_id) if cand.campaign_id else None
     render_check = compliance.evaluate(camp, "render", render_spec=rs.model_dump())
@@ -90,7 +111,7 @@ def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None
     words = load_words(cand.source_id)
     scenes = analysis.get(cand.source_id, "scenes")
     cuts = [sc["start"] for sc in (scenes.data.get("scenes", []) if scenes else [])][1:]
-    quiet = quiet_regions(cand.source_id)
+    quiet, rs = _fit_edits(cand, camp, words, rs)
     with db.session() as s:
         clip = s.scalar(select(Clip).where(Clip.candidate_id == candidate_id))
         if clip is None:

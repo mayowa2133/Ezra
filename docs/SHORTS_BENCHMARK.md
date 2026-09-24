@@ -90,17 +90,47 @@ The resulting openings:
 - "Let me introduce you to my doppelganger."
 - "I'm currently sneaking through the sewer system…"
 
+## Round 2: faces, speakers, lulls (iterations 9–10)
+
+The face gap sent this round to the detector first. On 24 random frames of the source, Haar found
+faces in 8 (one a false positive on a name-bar icon) where a person can see about 15. YuNet
+(OpenCV's CNN face detector) found 15. It became the default, and both sets were **re-measured with
+YuNet**: the benchmark's face share is 93% under YuNet, not the 78% Haar suggested.
+
+Changes:
+- **Face-aware selection:** a face in the opening seconds adds to the hook score; long stretches with
+  nobody on screen cost retention; the critic sees face coverage per clip and per sentence.
+- **Active speaker:** the tracker frames the face whose mouth moves (net of head movement) clearly
+  more than the others.
+- **Groups on vertical output:** frame the densest cluster of people instead of letterboxing (a
+  landscape panel stays whole).
+- **Lulls count as quiet:** the music bed dropping below the source's median loudness for 2+ s is
+  cut like silence, while loud action between lines stays.
+- **Minimum length:** when edits would push a clip under the campaign minimum, the render backs off
+  (silence only, then no cuts) instead of producing a failing clip.
+
+| Metric (median; faces measured with YuNet) | 30 top MrBeast Shorts | Ezra, iteration 10 |
+|---|---|---|
+| Letterboxed | 0% | **0%** (all 8 clips) |
+| Cuts per second | 0.51 | 0.48 |
+| Longest pause | 1.7 s | **1.6 s** (was 4.5 s before lulls) |
+| Share of time with speech | 0.66 | 0.73 |
+| Frames with a face | 93% | **64%** (source average: 55%) |
+| Face width (share of frame) | 0.10 | 0.18 (tighter crops of a horizontal source) |
+| Length | 36 s | 24 s |
+| Loudness | −14.2 LUFS | −14.1 LUFS |
+
 ## Verdict
 
 | Dimension | Stacks up? |
 |---|---|
 | Pacing (cuts, shot length), loudness, instant start | **Yes**, matches within a few percent |
-| Framing (fills the vertical frame) | **Yes** after iteration 8 (2% vs 0%) |
-| Speech/action balance | **Yes** after iteration 8 (0.69 vs 0.66) |
+| Framing (fills the vertical frame) | **Yes**: 0% letterboxed after iteration 10, groups framed on the densest cluster, active speaker tracked |
+| Speech/action balance | **Yes**: 0.73 speech share vs 0.66, longest pause 1.6 s vs 1.7 s |
 | Caption style | **Close** with the `pop` theme |
 | Openings | **Mostly.** Most now open on a reaction or the premise; a few still open on narration from the long-form ("Even in a city entirely designed to…") |
-| Length | **Shorter** (28 s vs 36 s); within the benchmark's spread (19–48 s) |
-| Faces on screen | **No** (45% vs 78%). Native Shorts are shot around faces; this long-form source has long faceless action and night-vision stretches |
+| Length | **Shorter** (24 s vs 36 s); inside the benchmark's spread (19–48 s) |
+| Faces on screen | **Partly** (64% vs 93%). The clips beat the source's own 55% (selection favours faces), but native Shorts are shot around faces and this source has long faceless action and night-vision stretches |
 | Title card | **Open question.** The benchmark uses none, but it's native content with a spoken premise; clips from long-form usually need a stated premise. Decide with an A/B experiment once posting (`ezra experiment create … hook_overlay`) |
 
 Where a clip from long-form can't match native Shorts (faces-first composition, a premise scripted for
@@ -108,7 +138,6 @@ the format), the gap comes from the source, not the editing.
 
 ## Remaining work
 
-- **Face-aware selection:** favour windows where people are on screen (the benchmark's 78%).
 - **Protect the source's own graphics** (counters, name bars) from cropping. This needs text/UI
   detection.
 - **A "premise prefix"** for clips whose moment needs context: a 2–3 s line from the video's cold open
