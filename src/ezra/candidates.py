@@ -162,7 +162,8 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
     topics = rows["topics"].data["topics"] if "topics" in rows else []
     scenes = rows["scenes"].data.get("scenes", []) if "scenes" in rows else []
     activity = rows["scenes"].data.get("activity_per_second", []) if "scenes" in rows else []
-    silence = rows["silence"].data.get("regions", []) if "silence" in rows else []
+    quiet = analysis.quiet_regions(source_id)
+    silence = [{"start": a, "end": b} for a, b in quiet] if quiet is not None else []
     faces = rows["faces"].data.get("timeline") if "faces" in rows else None
     loud = rows["loudness"].data if "loudness" in rows else None
     min_d, max_d = (camp.min_duration, camp.max_duration) if camp else (15.0, 60.0)
@@ -242,7 +243,8 @@ def _evaluate_span(source_id: int, camp: Campaign | None, start: float, end: flo
         raise ValueError(f"no speech between {start:.1f}s and {end:.1f}s")
     win = Window(source_id, s0, e0, inside)
     rows = analysis.all_for(source_id)
-    f = extract(win, rows["silence"].data.get("regions", []) if "silence" in rows else [],
+    quiet = analysis.quiet_regions(source_id)
+    f = extract(win, [{"start": a, "end": b} for a, b in quiet] if quiet is not None else [],
                 rows["scenes"].data.get("activity_per_second", []) if "scenes" in rows else [],
                 rows["faces"].data.get("timeline") if "faces" in rows else None,
                 rows["scenes"].data.get("scenes", []) if "scenes" in rows else [],
@@ -304,6 +306,9 @@ What high-performing clips share, and what you reward:
   the win, the arrest, the reaction, the punchline), not mid-action ("Hold on, hold on...") or on a
   transition. Extend into the later sentences to reach it when needed.
 - Leave room for the action: reactions, crashes and cheering between lines are part of the clip.
+- People carry Shorts: top ones show a face in the first second and keep a person on screen most of the
+  time (~80%). Prefer moments and start lines marked [person on screen]; long faceless stretches lose
+  viewers.
 - Top clips of this kind run about 20-50 seconds (median ~35 s); don't cut below 20 s unless the story
   is complete.
 - Clear stakes a stranger understands without the episode (money, elimination, danger, a secret).
@@ -344,6 +349,21 @@ def _critic_schema(rule_ids: list[int]) -> dict[str, Any]:
 
 
 _SEGMENT_CACHE: dict[int, list[Any]] = {}
+_FACE_CACHE: dict[int, list[Any]] = {}
+
+
+def _face_timeline(source_id: int) -> list[Any]:
+    if source_id not in _FACE_CACHE:
+        row = analysis.get(source_id, "faces")
+        _FACE_CACHE[source_id] = (row.data.get("timeline") or []) if row else []
+    return _FACE_CACHE[source_id]
+
+
+def _on_screen(timeline: list[Any], a: float, b: float) -> str:
+    inside = [f for t, f in timeline if a <= t <= b]
+    if not inside:
+        return ""
+    return " [person on screen]" if sum(1 for f in inside if f) >= 0.5 * len(inside) else " [no face]"
 
 
 def _segments(source_id: int) -> list[Any]:
@@ -370,8 +390,10 @@ def critic_pass(cands: list[Candidate], camp: Campaign | None) -> dict[int, dict
     batches = [cands[i:i + CRITIC_BATCH] for i in range(0, len(cands), CRITIC_BATCH)]
     learned = [x.text for x in perf.learnings()]          # read once, not from every thread
     _SEGMENT_CACHE.clear()                                   # fresh per pass (transcripts can be redone)
+    _FACE_CACHE.clear()
     for sid in {c.source_id for c in cands}:
         _segments(sid)
+        _face_timeline(sid)
     out: dict[int, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=CRITIC_PARALLEL) as pool:
         for part in pool.map(lambda b: _critic_batch(b, camp, learned), batches):
@@ -395,9 +417,17 @@ def _critic_batch(cands: list[Candidate], camp: Campaign | None, learned: list[s
         inside = [sg for sg in segs if sg.end > c.start + 0.05 and sg.start < c.end - 0.05]
         after = [sg for sg in segs if sg.start >= c.end - 0.05][:3]
         sentences[c.id] = inside + after
-        numbered = "\n".join(f"  {i + 1}. [{sg.start:.1f}s] {sg.text}" + ("   (after the clip)" if sg in after else "")
+        faces = _face_timeline(c.source_id)
+        numbered = "\n".join(f"  {i + 1}. [{sg.start:.1f}s]{_on_screen(faces, sg.start, sg.end)} {sg.text}"
+                             + ("   (after the clip)" if sg in after else "")
                              for i, sg in enumerate(inside + after))
-        lines.append(f"\n[id {c.id}] {c.start:.1f}-{c.end:.1f}s ({c.end - c.start:.0f}s)"
+        feat = getattr(c, "features", None) or {}
+        people = ""
+        if feat.get("face_rate") is not None:
+            people = (f"\nPeople on screen: {feat['face_rate']:.0%} of the clip"
+                      + ("" if feat.get("opening_face") is None else
+                         f"; opening shot: {'a face' if feat['opening_face'] else 'no face'}"))
+        lines.append(f"\n[id {c.id}] {c.start:.1f}-{c.end:.1f}s ({c.end - c.start:.0f}s){people}"
                      f"\nContext before: {(c.context_before or '')[-300:]}\nSentences:\n{numbered}")
     try:
         res = llm.call(CRITIC_SYSTEM, "\n".join(lines), _critic_schema([r.id for r in review_rules]),
@@ -444,11 +474,24 @@ def _retrim(cand: Candidate, camp: Campaign | None, start: float, end: float) ->
     return get(cand.id)
 
 
+def retrim(candidate_id: int, start: float, end: float) -> Candidate:
+    """Move a candidate to new bounds (a person trimming it in the editor), then re-rank it."""
+    cand = get(candidate_id)
+    if end - start < 1.0:
+        raise ValueError("a clip needs at least a second between start and end")
+    camp = campaigns.get(cand.campaign_id) if cand.campaign_id else None
+    _retrim(cand, camp, start, end)
+    rank(candidate_ids=[candidate_id], use_model=False)
+    return get(candidate_id)
+
+
 def rank(source_id: int | None = None, campaign: str | int | None = None, candidate_ids: list[int] | None = None,
          use_model: bool = True, critic_top: int = 25, progress: Progress | None = None) -> list[Candidate]:
     say = progress or (lambda f, m: None)
     with db.session() as s:
-        q = select(Candidate).where(Candidate.status.in_(("new", "ranked")))
+        # named candidates are re-ranked whatever their status (e.g. a rendered clip that was trimmed)
+        statuses = ("new", "ranked", "rendered") if candidate_ids else ("new", "ranked")
+        q = select(Candidate).where(Candidate.status.in_(statuses))
         if source_id is not None:
             q = q.where(Candidate.source_id == source_id)
         if campaign is not None:
@@ -492,7 +535,13 @@ def rank(source_id: int | None = None, campaign: str | int | None = None, candid
         elif crit:
             final = {k: round(0.65 * float(crit["scores"][k]) + 0.35 * float(heur[k]), 1) for k in FACTORS}
             scorer, conf = f"{crit['_provider']}+heuristic", 0.6
-            explanations["critic"] = {"reason": crit["reason"], "scores": crit["scores"]}
+            explanations["critic"] = {"reason": crit["reason"], "scores": crit["scores"],
+                                      "provider": crit["_provider"]}
+        elif (explanations.get("critic") or {}).get("scores"):
+            # re-ranked without a new critique (a trim, a single re-rank): keep the model's judgement
+            prev = explanations["critic"]
+            final = {k: round(0.65 * float(prev["scores"][k]) + 0.35 * float(heur[k]), 1) for k in FACTORS}
+            scorer, conf = f"{prev.get('provider', 'model')}+heuristic", 0.6
         else:
             final = {k: float(heur[k]) for k in FACTORS}
             scorer, conf = "heuristic", heuristic.CONFIDENCE

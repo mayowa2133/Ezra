@@ -82,6 +82,13 @@ def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[di
     if f["starts_with_dangling"]:
         h -= 12
         notes.append("opens on an unresolved pronoun")
+    # a person on screen from the first second (every one of 30 top MrBeast Shorts does this)
+    if f.get("opening_face") is True:
+        h += 6
+        notes.append("a face in the first seconds")
+    elif f.get("opening_face") is False:
+        h -= 6
+        notes.append("no face in the opening")
     # campaign-aware: the brief says what this campaign's audience comes for
     brief_hits = sorted(set(f.get("first_vocab", [])) & _brief_terms(campaign))
     if brief_hits:
@@ -115,6 +122,10 @@ def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[di
         # one idea per short: each extra subject is a place viewers swipe away
         r -= 10 * (f["topics_spanned"] - 1)
         notes.append(f"drifts across {f['topics_spanned']} topics")
+    lf = f.get("longest_faceless")
+    if lf is not None and lf > 6:
+        r -= min(12, 1.5 * (lf - 6))
+        notes.append(f"{lf:.0f}s with nobody on screen")
     d = f["duration"]
     if d > 50:
         r -= (d - 50) * 0.6

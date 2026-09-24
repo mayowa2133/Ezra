@@ -69,11 +69,8 @@ def _record_render_compliance(cd: Candidate, check: dict[str, Any]) -> None:
 
 
 def quiet_regions(source_id: int) -> list[tuple[float, float]] | None:
-    """Detected silence of the source, or None when it wasn't analysed."""
-    row = analysis.get(source_id, "silence")
-    if row is None:
-        return None
-    return [(float(r["start"]), float(r["end"])) for r in row.data.get("regions", [])]
+    """Detected silence plus sustained lulls (see analysis.quiet_regions)."""
+    return analysis.quiet_regions(source_id)
 
 
 def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None = None,
@@ -106,7 +103,9 @@ def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None
         s.add(ver)
         s.flush()
         clip_id, ver_id, vnum = clip.id, ver.id, n
-        if clip.status not in ("approved", "published"):
+        reapprove = clip.status == "approved"
+        if clip.status != "published":
+            # a changed clip is a different clip: an approval covered the old version only
             clip.status = "rendering"
     work = get_settings().work_dir / f"clip-{clip_id}-v{vnum}"
     work.mkdir(parents=True, exist_ok=True)
@@ -151,7 +150,8 @@ def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None
                  source_id=cand.source_id, clip_id=clip_id, version=vnum, output_seconds=round(result.duration, 1))
     costs.record("storage", quantity=float(storage.size(str(keys["video_key"]))), unit="bytes",
                  campaign_id=cand.campaign_id, clip_id=clip_id)
-    audit.record("clip.rendered", "clip", clip_id, version=vnum, layout=result.layout)
+    audit.record("clip.rendered", "clip", clip_id, version=vnum, layout=result.layout,
+                 approval_reset=reapprove)
     return get_clip(clip_id)
 
 
@@ -180,7 +180,15 @@ def render_top(campaign: str | int | None = None, source_id: int | None = None, 
 
 
 def rerender(clip_id: int, changes: dict[str, Any], progress: Progress | None = None) -> Clip:
+    """A new version with spec changes. `start`/`end` (source seconds) move the cut: they snap to
+    word edges and the candidate is re-scored and compliance-checked before rendering."""
     clip = get_clip(clip_id)
+    changes = dict(changes)
+    start, end = changes.pop("start", None), changes.pop("end", None)
+    if start is not None or end is not None:
+        cand = candidates.get(clip.candidate_id)
+        candidates.retrim(cand.id, float(start if start is not None else cand.start),
+                          float(end if end is not None else cand.end))
     current = next((v for v in clip.versions if v.id == clip.current_version_id), None)
     base = dict(current.spec) if current else {}
     base.update(changes)

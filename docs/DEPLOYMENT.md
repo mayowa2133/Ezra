@@ -86,6 +86,7 @@ open http://localhost:3000
 |---|---|---|
 | WhisperX (forced alignment) | `uv pip install whisperx`, `EZRA_TRANSCRIBER=whisperx` | Pulls PyTorch (~2 GB) |
 | pyannote diarization | `uv pip install pyannote.audio`, `EZRA_DIARIZER=pyannote`, `HF_TOKEN` | Accept the `pyannote/speaker-diarization-community-1` terms on Hugging Face |
+| YuNet faces (default `auto`) | nothing: the 227 KB model downloads to `EZRA_MODEL_CACHE` on first use | Falls back to Haar offline; `EZRA_FACE_DETECTOR=haar` to skip it |
 | MediaPipe faces | `uv sync --extra local --extra mediapipe`, `EZRA_FACE_DETECTOR=mediapipe` | Downloads the BlazeFace model |
 | Model critique | `EZRA_LLM=claude-cli` / `codex-cli` / `openai-compatible` (+ `EZRA_LLM_BASE_URL`, `EZRA_LLM_MODEL`) | CLIs use your existing subscription login; `openai-compatible` fits Ollama, LM Studio, vLLM |
 | OpenShorts | `docker compose --profile openshorts up -d`, `EZRA_CLIP_ENGINE=openshorts`, `EZRA_OPENSHORTS_URL=http://localhost:8001` | Needs its own model (GEMINI_API_KEY or a local server) |

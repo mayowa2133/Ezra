@@ -114,6 +114,40 @@ def detect_loudness(media: Path) -> dict[str, Any]:
     return {"per_second": series, "median": q(0.5), "p10": q(0.1), "p90": q(0.9)}
 
 
+LULL = -0.25        # loudness below the source median, in units of its p90-p10 spread
+LULL_MIN = 2         # seconds: a sustained lull, not a dip between two beats
+
+
+def lulls(loudness: dict[str, Any] | None) -> list[tuple[float, float]]:
+    """Stretches where a source that is never silent (a music bed under everything) goes quiet
+    for a while. Loud stretches between lines (crashes, cheering) are the action; lulls aren't."""
+    if not loudness or loudness.get("median") is None:
+        return []
+    med = float(loudness["median"])
+    spread = max(1.0, float(loudness.get("p90") or med) - float(loudness.get("p10") or med))
+    out: list[tuple[float, float]] = []
+    run_start: int | None = None
+    series = list(loudness["per_second"]) + [med]            # sentinel closes a trailing run
+    for i, v in enumerate(series):
+        low = (v - med) / spread < LULL
+        if low and run_start is None:
+            run_start = i
+        elif not low and run_start is not None:
+            if i - run_start >= LULL_MIN:
+                out.append((float(run_start), float(i)))
+            run_start = None
+    return out
+
+
+def quiet_regions(source_id: int) -> list[tuple[float, float]] | None:
+    """Where the source is quiet: detected silence plus sustained lulls. None when unanalysed."""
+    sil, loud = get(source_id, "silence"), get(source_id, "loudness")
+    if sil is None and loud is None:
+        return None
+    regions = [(float(r["start"]), float(r["end"])) for r in (sil.data.get("regions", []) if sil else [])]
+    return sorted(regions + lulls(loud.data if loud else None))
+
+
 def summarize_faces(samples: list[tuple[float, list[Any]]], scenes: list[dict[str, Any]]) -> dict[str, Any]:
     """Per-scene face statistics and a layout hint (single, two_shot, group, none)."""
     per_scene = []

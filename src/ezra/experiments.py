@@ -30,6 +30,7 @@ FACTORS = {
     "layout": lambda v: v in LAYOUTS,
     "punch_in": lambda v: v in PUNCH_INS,
     "hook_overlay": lambda v: isinstance(v, bool),
+    "caption_emoji": lambda v: isinstance(v, bool),
     "cta": lambda v: v is None or isinstance(v, str),
     "posting_time": lambda v: isinstance(v, int) and 0 <= v <= 23,
 }

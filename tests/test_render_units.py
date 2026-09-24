@@ -218,5 +218,61 @@ def test_faceless_scenes_follow_concentrated_motion_and_groups_follow_a_face():
     group = [(x, [Face(0.2, .5, .08, .1), Face(0.5, .5, .15, .2), Face(0.8, .5, .08, .1)]) for x in t]
     g = layout.plan(group, 10, [], "auto", "9:16", 2.0)
     assert g[0].mode == "track" and abs(g[0].shots[0].x - 0.5) < 0.05     # the biggest (nearest) face
-    panel = [(x, [Face(0.2, .5, .1, .1), Face(0.5, .5, .1, .1), Face(0.8, .5, .1, .1)]) for x in t]
-    assert layout.plan(panel, 10, [], "auto", "9:16", 2.0)[0].mode == "blur"            # equals: show all
+    crowd = [(x, [Face(0.1, .5, .1, .1), Face(0.6, .5, .1, .1), Face(0.66, .5, .1, .1), Face(0.72, .5, .1, .1)])
+             for x in t]
+    c = layout.plan(crowd, 10, [], "auto", "9:16", 2.0)[0]
+    assert c.mode == "track" and abs(c.shots[0].x - 0.66) < 0.03       # vertical: the densest cluster
+    assert layout.plan(crowd, 10, [], "auto", "16:9", 2.0)[0].mode == "blur"   # landscape: show everyone
+
+
+def test_active_speaker_is_framed_over_the_biggest_face():
+    import numpy as np
+
+    from ezra.analysis.faces import Face, _patches, _talk
+    from ezra.render import layout
+
+    big_quiet = Face(0.3, 0.5, 0.2, 0.3, talk=0.001)
+    small_talking = Face(0.75, 0.5, 0.1, 0.15, talk=0.03)
+    assert layout._subject([big_quiet, small_talking]) is small_talking
+    both_quiet = [Face(0.3, 0.5, 0.2, 0.3), Face(0.75, 0.5, 0.1, 0.15)]
+    assert layout._subject(both_quiet) is both_quiet[0]                    # nobody talking: most prominent
+    # talk = mouth change net of upper-face change (a moving head doesn't count as talking)
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 255, (200, 200)).astype(np.uint8)
+    f = Face(0.5, 0.5, 0.4, 0.5)
+    moved_mouth = frame.copy()
+    moved_mouth[115:145, :] = 255 - moved_mouth[115:145, :]                  # only the lower face changes
+    prev = [(f, _patches(frame, f))]
+    assert _talk(prev, f, _patches(moved_mouth, f)) > 0.1
+    shifted = np.roll(frame, 3, axis=1)                                    # whole head moves
+    assert _talk(prev, f, _patches(shifted, f)) < 0.05
+
+
+def test_caption_emoji_above_illustratable_words():
+    import numpy as np
+    import pytest
+
+    from ezra.render import captions
+    from ezra.transcription.base import Word
+
+    assert captions.emoji_for(["They", "caught", "him"]) == "🚨"
+    assert captions.emoji_for(["$400,000"]) == "💰" and captions.emoji_for(["the", "end"]) is None
+    if captions.emoji_image("💰", 64) is None:
+        pytest.skip("no colour emoji font on this system")
+    words = [Word("won", 0.0, 0.5), Word("$500,000", 0.5, 1.2)]
+    on = captions.CaptionRenderer(words, "pop", 1080, 1920, {}, emoji=True)
+    off = captions.CaptionRenderer(words, "pop", 1080, 1920, {}, emoji=False)
+    a = np.frombuffer(on.frame(0.2), np.uint8).reshape(on.band_h, 1080, 4)
+    b = np.frombuffer(off.frame(0.2), np.uint8).reshape(off.band_h, 1080, 4)
+    top = slice(0, on.band_h // 3)
+    colourful = lambda x: int(((np.ptp(x[top, :, :3].astype(int), axis=2) > 60) & (x[top, :, 3] > 0)).sum())
+    assert colourful(a) > 500 and colourful(b) == 0            # a colour glyph above the words, only when on
+
+
+def test_lulls_are_quiet_but_loud_action_is_not():
+    from ezra.analysis import lulls
+
+    series = [-6.0] * 10 + [-9.5, -9.8, -9.6] + [-6.0] * 5 + [-3.0, -2.5, -2.8] + [-6.0] * 5 + [-9.0]
+    loud = {"per_second": series, "median": -6.0, "p10": -9.0, "p90": -4.0}
+    assert lulls(loud) == [(10.0, 13.0)]        # the 3 s dip; the loud burst and the 1 s dip at the end stay
+    assert lulls(None) == []

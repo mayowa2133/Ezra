@@ -111,6 +111,20 @@ def _first_words(text: str, n: int) -> list[str]:
     return re.findall(r"[a-z0-9$']+", text.lower())[:n]
 
 
+def _face_timing(samples: list[tuple[float, Any]], start: float) -> tuple[bool | None, float | None]:
+    """(a face in the first 2 s, longest stretch with no face in seconds). Top Shorts show a person
+    from frame one and keep one on screen ~80% of the time; None without face data."""
+    if not samples:
+        return None, None
+    step = min((b[0] - a[0] for a, b in zip(samples, samples[1:]) if b[0] > a[0]), default=1.0)
+    opening = any(f for t, f in samples if t < start + 2.0)
+    run = longest = 0
+    for _, f in samples:
+        run = 0 if f else run + 1
+        longest = max(longest, run)
+    return opening, round(longest * step, 1)
+
+
 def _energy(loudness: dict[str, Any] | None, a: float, b: float) -> tuple[float | None, float | None]:
     """(opening energy, peak energy): loudness above the source's median, in units of the
     source's own spread (p90 - p10). Relative, because a brick-walled YouTube mix spans ~5 LU
@@ -153,7 +167,9 @@ def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
     uniq = set(toks)
     rarity = sum(math.log(1 + n_docs / (1 + corpus_df.get(t, 0))) for t in uniq) / len(uniq) if uniq else 0.0
     sec = [a for i, a in enumerate(activity) if win.start <= i < win.end]
-    faces_in = [f for t, f in (face_timeline or []) if win.start <= t < win.end]
+    face_samples = [(t, f) for t, f in (face_timeline or []) if win.start <= t < win.end]
+    faces_in = [f for _, f in face_samples]
+    opening_face, longest_faceless = _face_timing(face_samples, win.start)
     cuts = sum(1 for sc in scenes if win.start < sc["start"] < win.end)
     topic_ids = {i for i, tp in enumerate(topics) if tp["start"] < win.end and tp["end"] > win.start}
     speakers = sorted({w.spk for w in words if w.spk})
@@ -190,6 +206,7 @@ def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
         "visual_activity": round(sum(sec) / len(sec), 2) if sec else 0.0,
         "face_rate": round(sum(1 for f in faces_in if f) / len(faces_in), 3) if faces_in else None,
         "max_faces": max((len(f) for f in faces_in), default=0),
+        "opening_face": opening_face, "longest_faceless": longest_faceless,
         "scene_cuts": cuts, "topics_spanned": len(topic_ids), "speakers": speakers,
         "n_speakers": len(speakers),
         "lexicon_hits": em_all["hits"],

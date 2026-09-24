@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     whisper_prompt: str | None = Field(None, description="Initial prompt, e.g. 'Um, uh, like' to keep disfluencies")
     model_cache: Path | None = Field(None, description="Where ML models are cached; default $EZRA_HOME/cache/models")
     diarizer: str = Field("local", description="local | pyannote | none")
-    face_detector: str = Field("haar", description="haar | mediapipe")
+    face_detector: str = Field("auto", description="auto (YuNet, Haar offline) | yunet | haar | mediapipe")
     llm: str = Field("heuristic", description="heuristic | claude-cli | codex-cli | openai-compatible")
     llm_model: str | None = None
     llm_base_url: str | None = None

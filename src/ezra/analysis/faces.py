@@ -5,6 +5,9 @@ haar       OpenCV 4.x bundled Haar cascades (frontal + profile). No download.
 mediapipe  MediaPipe Tasks BlazeFace short-range (Apache-2.0). More robust to
            pose and lighting; the model (~230 KB) is fetched once from Google's
            official model bucket into $EZRA_HOME/cache/models.
+yunet      OpenCV's YuNet CNN detector (cv2.FaceDetectorYN, MIT model from the
+           official opencv_zoo, ~227 KB, fetched once). Finds small, turned, dim
+           and motion-blurred faces that Haar misses; no extra package.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ class Face:
     w: float       # width as a fraction of frame width
     h: float
     score: float = 1.0
+    talk: float = 0.0   # mouth movement since the previous sample, net of head movement (active speaker)
 
 
 Samples = list[tuple[float, list[Face]]]  # (t relative to range start, faces)
@@ -119,7 +123,59 @@ class MediaPipeDetector(FaceDetector):
         return out
 
 
-DETECTORS: dict[str, Callable[[], FaceDetector]] = {"haar": HaarDetector, "mediapipe": MediaPipeDetector}
+class YuNetDetector(FaceDetector):
+    name = "yunet"
+    MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/"
+                 "face_detection_yunet_2023mar.onnx")
+    MODEL_FILE = "face_detection_yunet_2023mar.onnx"
+    MODEL_BYTES = 232589
+    SCORE = 0.6
+
+    def __init__(self) -> None:
+        import cv2
+
+        if not hasattr(cv2, "FaceDetectorYN"):
+            raise RuntimeError("this OpenCV build has no FaceDetectorYN (needs OpenCV >= 4.5.4)")
+        model = get_settings().models_dir / self.MODEL_FILE
+        if not model.exists():
+            model.parent.mkdir(parents=True, exist_ok=True)
+            tmp = model.with_suffix(".part")
+            urllib.request.urlretrieve(self.MODEL_URL, tmp)
+            if tmp.stat().st_size != self.MODEL_BYTES:
+                tmp.unlink(missing_ok=True)
+                raise RuntimeError("YuNet model download was incomplete or changed upstream")
+            tmp.replace(model)
+        self.cv2 = cv2
+        self.net = cv2.FaceDetectorYN.create(str(model), "", (320, 320), self.SCORE, 0.3, 50)
+        self.size: tuple[int, int] = (0, 0)
+
+    def detect(self, gray: np.ndarray, rgb: np.ndarray | None = None) -> list[Face]:
+        img = (self.cv2.cvtColor(rgb, self.cv2.COLOR_RGB2BGR) if rgb is not None
+               else self.cv2.cvtColor(gray, self.cv2.COLOR_GRAY2BGR))
+        h, w = img.shape[:2]
+        if self.size != (w, h):
+            self.net.setInputSize((w, h))
+            self.size = (w, h)
+        _, found = self.net.detect(img)
+        out = []
+        for row in (found if found is not None else []):
+            x, y, fw, fh, score = float(row[0]), float(row[1]), float(row[2]), float(row[3]), float(row[-1])
+            if fw * fh < 16 * 16:
+                continue
+            out.append(Face((x + fw / 2) / w, (y + fh / 2) / h, fw / w, fh / h, score))
+        return out
+
+
+def _auto() -> FaceDetector:
+    """YuNet when its model is available, else Haar (offline installs keep working)."""
+    try:
+        return YuNetDetector()
+    except Exception:
+        return HaarDetector()
+
+
+DETECTORS: dict[str, Callable[[], FaceDetector]] = {"haar": HaarDetector, "mediapipe": MediaPipeDetector,
+                                                    "yunet": YuNetDetector, "auto": _auto}
 
 
 def get_detector(name: str | None = None) -> FaceDetector:
@@ -141,6 +197,36 @@ def sample_faces(media: Path, start: float, end: float, fps: float = 2.0,
                  progress: Callable[[float], None] | None = None) -> Samples:
     """Decode [start, end] at `fps`, scaled to SAMPLE_WIDTH, and detect faces in each frame."""
     return sample_faces_and_motion(media, start, end, fps, detector, progress)[0]
+
+
+def _patches(gray: np.ndarray, f: Face) -> tuple[np.ndarray, np.ndarray] | None:
+    """Mouth (lower face) and eyes (upper face) patches at a fixed size, for talk detection."""
+    h, w = gray.shape
+    x0, x1 = int((f.cx - f.w * 0.3) * w), int((f.cx + f.w * 0.3) * w)
+    mouth_y0, mouth_y1 = int((f.cy + f.h * 0.12) * h), int((f.cy + f.h * 0.45) * h)
+    eyes_y0, eyes_y1 = int((f.cy - f.h * 0.35) * h), int((f.cy - f.h * 0.05) * h)
+    if x1 - x0 < 8 or mouth_y1 - mouth_y0 < 4 or x0 < 0 or x1 > w or eyes_y0 < 0 or mouth_y1 > h:
+        return None
+
+    def norm(a: np.ndarray) -> np.ndarray:
+        ys = np.linspace(0, a.shape[0] - 1, 12).astype(int)
+        xs = np.linspace(0, a.shape[1] - 1, 24).astype(int)
+        return a[np.ix_(ys, xs)].astype(np.float32)
+
+    return norm(gray[mouth_y0:mouth_y1, x0:x1]), norm(gray[eyes_y0:eyes_y1, x0:x1])
+
+
+def _talk(prev: list[tuple[Face, tuple[np.ndarray, np.ndarray] | None]], f: Face,
+          cur: tuple[np.ndarray, np.ndarray] | None) -> float:
+    """Mouth change minus eye-region change against the same face in the previous sample."""
+    if cur is None or not prev:
+        return 0.0
+    near = min(prev, key=lambda p: abs(p[0].cx - f.cx) + abs(p[0].cy - f.cy))
+    if near[1] is None or abs(near[0].cx - f.cx) > f.w or abs(near[0].cy - f.cy) > f.h:
+        return 0.0
+    mouth = float(np.abs(cur[0] - near[1][0]).mean())
+    eyes = float(np.abs(cur[1] - near[1][1]).mean())
+    return round(max(0.0, mouth - eyes) / 255.0, 4)
 
 
 def _motion(prev: np.ndarray | None, cur: np.ndarray) -> tuple[float | None, float]:
@@ -168,7 +254,7 @@ def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 
     det = detector or get_detector()
     w, h = video_size(media)
     sh = max(2, int(round(SAMPLE_WIDTH * h / w / 2)) * 2)
-    need_rgb = isinstance(det, MediaPipeDetector)
+    need_rgb = isinstance(det, (MediaPipeDetector, YuNetDetector))
     pix = "rgb24" if need_rgb else "gray"
     frame_bytes = SAMPLE_WIDTH * sh * (3 if need_rgb else 1)
     proc = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}",
@@ -178,6 +264,7 @@ def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 
     out: Samples = []
     motion: Motion = []
     prev_small: np.ndarray | None = None
+    prev_faces: list[tuple[Face, tuple[np.ndarray, np.ndarray] | None]] = []
     total = max(1, int((end - start) * fps))
     i = 0
     while True:
@@ -190,7 +277,12 @@ def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 
             gray = rgb.mean(axis=2).astype(np.uint8)
         else:
             rgb, gray = None, arr.reshape(sh, SAMPLE_WIDTH)
-        out.append((i / fps, det.detect(gray, rgb)))
+        faces = det.detect(gray, rgb)
+        now = [(f, _patches(gray, f)) for f in faces]
+        for f, patch in now:
+            f.talk = _talk(prev_faces, f, patch)
+        prev_faces = now
+        out.append((i / fps, faces))
         small = gray[::8, ::8]
         mx, share = _motion(prev_small, small)
         motion.append((i / fps, mx, share))

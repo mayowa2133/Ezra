@@ -307,7 +307,8 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             position = spec.caption_position or (0.5 if "split" in modes else None)
             renderer = cap.CaptionRenderer(out_words, spec.caption_theme, W, H, safe, font=spec.caption_font,
                                            size=spec.caption_size, position=position,
-                                           colors=spec.colors, keywords=spec.highlight_keywords)
+                                           colors=spec.colors, keywords=spec.highlight_keywords,
+                                           emoji=spec.caption_emoji)
             inputs += ["-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{renderer.band_h}", "-r", str(FPS),
                        "-i", "pipe:0"]
             o = nxt()
@@ -424,7 +425,7 @@ def pick_thumbnail(video: Path, out: Path) -> Path:
     cap_ = cv2.VideoCapture(str(video))
     best, best_score = None, -1.0
     try:
-        det = get_detector("haar")
+        det = get_detector()
     except Exception:
         det = None
     for t in np.linspace(min(0.6, d / 2), max(0.6, d - 0.5), num=12):

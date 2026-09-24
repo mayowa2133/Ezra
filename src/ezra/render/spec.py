@@ -27,6 +27,7 @@ class RenderSpec(BaseModel):
     crop_x: float | None = Field(None, ge=0, le=1, description="Pin the crop (0 left .. 1 right); overrides tracking")
     captions: bool = True
     caption_theme: str = "bold"
+    caption_emoji: bool = False       # an emoji above captions with an illustratable word
     caption_font: str | None = None
     caption_size: int | None = Field(None, ge=24, le=200)
     caption_position: float | None = Field(None, ge=0.3, le=0.95, description="Vertical centre, fraction of height")

@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Badge, ComplianceBox, ErrorNote, ScoreBars } from "@/components/ui";
-import { api, money, post, useApi } from "@/lib/api";
-import type { ReviewCard } from "@/lib/types";
+import { Badge, ComplianceBox, ErrorNote, JobBar, ScoreBars } from "@/components/ui";
+import { api, money, post, useApi, useJob } from "@/lib/api";
+import type { Job, ReviewCard } from "@/lib/types";
 
 type Meta = Record<string, { title?: string; caption?: string; description?: string; hashtags?: string[] }>;
 
@@ -60,6 +60,91 @@ function CopyEditor({ clipId, initial, onError, onSaved }: {
                     onChange={(e) => setMeta({ ...meta, [p]: { ...m, caption: e.target.value } })} />
         </div>
       ))}
+    </div>
+  );
+}
+
+const THEMES = ["pop", "bold", "clean", "karaoke", "high-impact", "cinematic", "minimal"];
+const LAYOUTS = ["auto", "track", "split", "center", "blur"];
+const STEPS = [-1, -0.25, 0.25, 1];
+
+/** Trim, restyle and re-render one clip. Keyed by clip id so its state resets per card. */
+function EditPanel({ card, onDone, onError }: {
+  card: ReviewCard; onDone: (m: string) => void; onError: (m: string) => void;
+}) {
+  const [start, setStart] = useState(card.candidate.start);
+  const [end, setEnd] = useState(card.candidate.end);
+  const [theme, setTheme] = useState("");
+  const [layout, setLayout] = useState("");
+  const [emoji, setEmoji] = useState<"" | "on" | "off">("");
+  const [jobId, setJobId] = useState<number | null>(null);
+  const job = useJob(jobId, (j: Job) => {
+    setJobId(null);
+    if (j.status === "completed") onDone(`clip ${card.clip_id} re-rendered: review it again before publishing`);
+    else onError(`re-render ${j.status}: ${j.error?.message ?? j.message ?? ""}`);
+  });
+  const changed = start !== card.candidate.start || end !== card.candidate.end || theme !== "" || layout !== ""
+    || emoji !== "";
+
+  async function rerender() {
+    const changes: Record<string, unknown> = {};
+    if (start !== card.candidate.start) changes.start = start;
+    if (end !== card.candidate.end) changes.end = end;
+    if (theme) changes.caption_theme = theme;
+    if (layout) changes.layout = layout;
+    if (emoji) changes.caption_emoji = emoji === "on";
+    try {
+      setJobId((await post<Job>(`/clips/${card.clip_id}/rerender`, { changes })).id);
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  }
+
+  const nudge = (which: "start" | "end") => (
+    <span className="row" style={{ gap: 4 }}>
+      {STEPS.map((d) => (
+        <button key={d} className="small" disabled={jobId !== null}
+                onClick={() => (which === "start" ? setStart((x) => +(x + d).toFixed(2)) : setEnd((x) => +(x + d).toFixed(2)))}>
+          {d > 0 ? `+${d}` : d}s
+        </button>
+      ))}
+    </span>
+  );
+
+  return (
+    <div className="panel">
+      <h2 style={{ marginTop: 0 }}>Edit</h2>
+      <div className="row small"><span style={{ width: 150 }}>Start {start.toFixed(2)}s</span>{nudge("start")}</div>
+      <div className="row small" style={{ marginTop: 6 }}><span style={{ width: 150 }}>End {end.toFixed(2)}s</span>{nudge("end")}</div>
+      <div className="muted small" style={{ marginTop: 4 }}>
+        {(end - start).toFixed(1)}s · cuts snap to the nearest word edge
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <label className="small">Captions{" "}
+          <select value={theme} onChange={(e) => setTheme(e.target.value)} disabled={jobId !== null}>
+            <option value="">keep</option>
+            {THEMES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </label>
+        <label className="small">Framing{" "}
+          <select value={layout} onChange={(e) => setLayout(e.target.value)} disabled={jobId !== null}>
+            <option value="">keep</option>
+            {LAYOUTS.map((l) => <option key={l} value={l}>{l}</option>)}
+          </select>
+        </label>
+        <label className="small">Emoji{" "}
+          <select value={emoji} onChange={(e) => setEmoji(e.target.value as "" | "on" | "off")}
+                  disabled={jobId !== null}>
+            <option value="">keep</option><option value="on">on</option><option value="off">off</option>
+          </select>
+        </label>
+        <span className="spacer" />
+        <button className="primary" disabled={!changed || jobId !== null} onClick={rerender}>Re-render</button>
+      </div>
+      {card.status === "approved" && changed && (
+        <p className="small muted">Re-rendering moves this clip back to review; approve the new version.</p>
+      )}
+      {jobId !== null && <JobBar job={job} />}
     </div>
   );
 }
@@ -175,6 +260,8 @@ export default function Review() {
                 <div className="small muted">{card.expected_value.note}</div>
               </div>
             </div>
+            <EditPanel key={`edit-${card.clip_id}-${card.version}`} card={card} onError={setErr}
+                       onDone={(m) => { setFlash(m); void reload(); }} />
             <CopyEditor key={card.clip_id} clipId={card.clip_id} initial={card.platform_metadata ?? {}}
                         onError={setErr} onSaved={setFlash} />
             <div className="panel">

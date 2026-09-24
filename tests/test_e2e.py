@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from ezra import (
     analysis,
     candidates,
@@ -310,3 +312,34 @@ def test_live_session_clips_a_replayed_stream(use_processed):
     got = [candidates.get(i) for i in out["candidates"]]
     assert got and all(c.origin == "live" and c.origin_ref.startswith(out["session"]) for c in got)
     assert all(c.compliance_status in ("PASS", "REVIEW_REQUIRED", "FAIL") for c in got)
+
+
+def test_trimming_an_approved_clip_rerenders_it_and_sends_it_back_to_review(use_processed):
+    cand = candidates.list_candidates("demo", top=1)[0]
+    clip = render.render_candidate(cand.id)
+    review.approve(clip.id, actor="test")
+    assert render.get_clip(clip.id).status == "approved"
+    clip = render.rerender(clip.id, {"start": cand.start + 3.0, "caption_theme": "pop"})
+    moved = candidates.get(cand.id)
+    assert moved.start > cand.start + 1.5 and moved.end == cand.end        # snapped to a word edge
+    assert render.get_clip(clip.id).status == "rendered"                   # needs a human again
+    v = render.current_version(clip)
+    assert v.version == 2 and v.spec["caption_theme"] == "pop"
+    assert abs(v.duration - (moved.end - moved.start)) < (moved.end - moved.start) * 0.35
+    with pytest.raises(ValueError):
+        render.rerender(clip.id, {"start": moved.end - 0.5, "end": moved.end})
+
+
+def test_rerank_after_a_trim_keeps_the_model_critique(use_processed):
+    from ezra import db
+    from ezra.db.models import Candidate
+
+    cand = candidates.list_candidates("demo", top=1)[0]
+    scores = {k: 90.0 for k in candidates.FACTORS}
+    with db.session() as s:
+        row = s.get(Candidate, cand.id)
+        row.score_explanations = dict(row.score_explanations or {}) | {
+            "critic": {"reason": "strong", "scores": scores, "provider": "claude-cli"}}
+    trimmed = candidates.retrim(cand.id, cand.start + 2.0, cand.end)
+    assert trimmed.scorer == "claude-cli+heuristic"
+    assert trimmed.hook_score >= 0.65 * 90                      # the critic's view survives the trim

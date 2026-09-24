@@ -123,6 +123,62 @@ def chunk_words(words: list[Word], per_chunk: int, max_span: float = 1.6) -> lis
     return out
 
 
+EMOJI_FONTS = ["/System/Library/Fonts/Apple Color Emoji.ttc",
+               "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", "/usr/share/fonts/noto/NotoColorEmoji.ttf"]
+# One emoji above a caption when it has a word worth illustrating (the Submagic / Opus caption look).
+EMOJI_MAP = {
+    "💰": {"money", "cash", "dollars", "dollar", "paid", "pay", "rich", "prize"},
+    "🤑": {"million", "millions", "billion", "billions"},
+    "🏆": {"win", "wins", "won", "winner", "winning", "champion"},
+    "🚓": {"cops", "cop", "police", "officer", "officers"},
+    "🚨": {"arrest", "arrested", "caught", "busted", "alarm"},
+    "🏃": {"escape", "escaped", "escaping", "run", "running", "ran", "chase", "chased"},
+    "🤫": {"secret", "secrets", "hidden", "hiding", "hide", "sneak", "sneaking"},
+    "💥": {"explode", "exploded", "explosion", "bomb", "detonator", "crash", "crashed", "boom"},
+    "🔥": {"fire", "burning", "hot", "insane", "crazy"},
+    "🤯": {"shocked", "unbelievable", "impossible", "mind", "genius"},
+    "😱": {"scared", "afraid", "terrified", "scary", "danger", "dangerous"},
+    "😂": {"funny", "laugh", "laughing", "hilarious", "haha", "joke"},
+    "💀": {"dead", "died", "fail", "failed", "lost", "lose", "worst"},
+    "🔒": {"jail", "prison", "locked", "lock", "trapped", "trap", "cell"},
+    "⏰": {"minutes", "hours", "seconds", "time", "clock", "deadline"},
+    "🧠": {"plan", "strategy", "smart", "idea"},
+    "❤️": {"love", "mom", "mother", "family"},
+    "📱": {"phone", "camera", "cameras"},
+    "🍕": {"food", "pizza", "eat", "eating"},
+}
+_WORD_EMOJI = {w: e for e, ws in EMOJI_MAP.items() for w in ws}
+
+
+def emoji_for(words: list[str]) -> str | None:
+    for w in words:
+        e = _WORD_EMOJI.get(w.lower().strip(" ,.!?;:\"'"))
+        if e:
+            return e
+        if w.strip().startswith("$"):
+            return "💰"
+    return None
+
+
+@lru_cache(maxsize=64)
+def emoji_image(char: str, px: int) -> Image.Image | None:
+    """A colour emoji at px size, from the system's colour emoji font (None when there isn't one)."""
+    for path in EMOJI_FONTS:
+        if not os.path.exists(path):
+            continue
+        for native in (160, 137, 109, 96, 64):   # bitmap strike sizes of Apple / Noto colour fonts
+            try:
+                font = ImageFont.truetype(path, native)
+            except OSError:
+                continue
+            im = Image.new("RGBA", (native * 2, native * 2), (0, 0, 0, 0))
+            ImageDraw.Draw(im).text((native // 2, native // 2), char, font=font, embedded_color=True)
+            box = im.getbbox()
+            if box:
+                return im.crop(box).resize((px, px), Image.Resampling.LANCZOS)
+    return None
+
+
 def is_keyword(word: str, extra: set[str]) -> bool:
     w = word.lower().strip(" ,.!?;:\"'")
     return bool(NUMBER.search(word)) or w in EMPHASIS or w in extra
@@ -131,7 +187,8 @@ def is_keyword(word: str, extra: set[str]) -> bool:
 class CaptionRenderer:
     def __init__(self, words: list[Word], theme: str, width: int, height: int, safe: dict[str, float],
                  font: str | None = None, size: int | None = None, position: float | None = None,
-                 colors: dict[str, str] | None = None, keywords: list[str] | None = None):
+                 colors: dict[str, str] | None = None, keywords: list[str] | None = None,
+                 emoji: bool = False):
         if theme not in THEMES:
             raise ValueError(f"unknown caption theme {theme!r}; available: {sorted(THEMES)}")
         self.t = dict(THEMES[theme])
@@ -159,6 +216,7 @@ class CaptionRenderer:
         per = 1 if self.t["mode"] == "word" and self.t["words"] == 1 else self.t["words"]
         self.chunks = chunk_words(words, per)
         self._cache: dict[tuple, bytes] = {}
+        self.emoji = [emoji_for([w.w for w in ch.words]) if emoji else None for ch in self.chunks]
 
     def _text(self, w: str) -> str:
         w = burnable(w)
@@ -221,6 +279,12 @@ class CaptionRenderer:
             dy = int((5 - phase) * self.size * 0.05)
         total_h = self.line_h * len(lines)
         y0 = (self.band_h - total_h) // 2 + dy
+        mark = self.emoji[ci]
+        if mark:
+            px = int(self.size * 1.15)
+            icon = emoji_image(mark, px) if y0 - px - self.pad // 3 >= 0 else None
+            if icon is not None:
+                img.alpha_composite(icon, (int((self.W - px) / 2), int(y0 - px - self.pad // 3)))
         fill = rgba(self.t["fill"])
         dim = rgba(self.t.get("dim"))
         act = rgba(self.t["active"])

@@ -39,10 +39,45 @@ class ScenePlan:
     faces: int = 0
 
 
+TALK_MIN = 0.012     # mouth movement (net of head movement) that counts as talking
+TALK_LEAD = 1.8      # how clearly the talker must out-move everyone else
+
+
+GROUP_WINDOW = 0.32   # a 9:16 crop of a 16:9 frame, as a fraction of its width
+
+
+def _crowd(faces: list[Face]) -> Face:
+    """The crop-width window holding the most people (weighted by face size), as a pseudo-face."""
+    best, score = faces[0], -1.0
+    for anchor in faces:
+        inside = [f for f in faces if abs(f.cx - anchor.cx) <= GROUP_WINDOW / 2]
+        s = sum(f.w for f in inside)
+        if s > score:
+            cx = sum(f.cx * f.w for f in inside) / s
+            cy = sum(f.cy * f.w for f in inside) / s
+            best, score = Face(cx, cy, max(f.w for f in inside), max(f.h for f in inside)), s
+    return best
+
+
+def _subject(faces: list[Face]) -> Face:
+    """Who to frame: the face that is clearly talking (active speaker), else a face clearly nearest
+    the camera, else (in a group) the window with the most people."""
+    biggest = max(faces, key=lambda f: f.w)
+    if len(faces) < 2:
+        return biggest
+    ranked = sorted(faces, key=lambda f: f.talk, reverse=True)
+    if ranked[0].talk >= TALK_MIN and ranked[0].talk >= TALK_LEAD * max(ranked[1].talk, 1e-4):
+        return ranked[0]
+    widths = sorted((f.w for f in faces), reverse=True)
+    if len(faces) >= 3 and widths[0] < 1.3 * widths[1]:
+        return _crowd(faces)
+    return biggest
+
+
 def plan_shots(samples: list[tuple[float, list[Face]]], start: float, end: float, fps: float) -> list[Shot]:
     """Most prominent face per sample → steady shots that move only on a
     confirmed jump (CONFIRM consecutive samples agreeing on a new spot)."""
-    track = [(t, max(fs, key=lambda f: f.w).cx if fs else None) for t, fs in samples if start <= t < end]
+    track = [(t, _subject(fs).cx if fs else None) for t, fs in samples if start <= t < end]
     seen = [x for _, x in track if x is not None]
     if not seen:
         return [Shot(start, end, 0.5)]
@@ -150,11 +185,11 @@ def plan(samples: list[tuple[float, list[Face]]], duration: float, scene_cuts: l
                     mode = "blur"
             elif n == 2 and pair and vertical:
                 mode = "split"
-            elif n >= 3 and not _dominant(inside):
-                mode = "blur"      # a panel of equals: without knowing who talks, show everyone
+            elif n >= 3 and not _dominant(inside) and not vertical:
+                mode = "blur"      # landscape output of a panel: show everyone
             else:
-                # one face, or a group with someone nearest the camera: follow them, filling the
-                # frame the way strong vertical clips do
+                # one face or a group: follow the active speaker, the face nearest the camera, or
+                # the densest cluster of people; vertical output always fills the frame
                 mode = "track"
         elif requested == "split" and not (pair and vertical):
             mode = "track"

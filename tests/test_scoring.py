@@ -141,3 +141,14 @@ def test_critic_keep_range_becomes_new_bounds(monkeypatch):
     monkeypatch.setattr(llm, "call", fake_call)
     out = candidates.critic_pass([c], None)
     assert out[1]["_bounds"] == (20, 40)              # opens on the strongest line, ends on the payoff
+
+
+def test_face_timing_and_its_effect_on_hook_and_retention():
+    from ezra.scoring.features import _face_timing
+
+    tl = [(float(t), [[0.5, 0.4, 0.1, 0.1]] if t < 3 or t > 15 else []) for t in range(20)]
+    assert _face_timing(tl, 0.0) == (True, 13.0)            # face at the start, 13 s faceless (3..15)
+    faceful, _ = heuristic.score(_features(opening_face=True, longest_faceless=2.0))
+    faceless, why = heuristic.score(_features(opening_face=False, longest_faceless=14.0))
+    assert faceful["hook"] - faceless["hook"] == 12
+    assert faceless["retention"] < faceful["retention"] and "nobody on screen" in why["retention"]

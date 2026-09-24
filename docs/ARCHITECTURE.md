@@ -33,7 +33,7 @@
   |---|---|---|
   | Transcription | `TranscriptionProvider` | faster-whisper (default, batched), WhisperX |
   | Diarization | `Diarizer` | local MFCC + agglomerative clustering (default), pyannote community-1, none |
-  | Face detection | `FaceDetector` | OpenCV Haar with eye verification (default), MediaPipe BlazeFace |
+  | Face detection | `FaceDetector` | `auto` (default): OpenCV YuNet (227 KB MIT model fetched once), Haar with eye verification when offline; MediaPipe BlazeFace |
   | Scenes | function | PySceneDetect ContentDetector |
   | Model critique | `LLMProvider` | heuristic (default), `claude -p`, `codex exec`, any OpenAI-compatible server |
   | Storage | `Storage` | local filesystem, S3-compatible (MinIO, AWS, R2) |
@@ -115,19 +115,29 @@ version and confidence, and skipped on re-run unless `--force`:
 `compose()` builds one ffmpeg filter graph per clip:
 
 1. **EDL** (`edl.build`):
-   - Long gaps shrink to 0.18 s and filler words are cut.
+   - Long *quiet* gaps (detected silence, not merely gaps between words: music and action
+     stay) shrink to 0.18 s, and filler words are cut.
    - `edl.refine_boundaries` then moves each cut to the quietest 5 ms frame within ±120 ms, never
      into a kept word.
    - Each join gets 10 ms audio fades.
    - Words are remapped onto the output timeline.
 2. **Reframing plan** (`layout.plan`), per scene:
-   - `track`: crop follows the most prominent face and moves only after a confirmed jump.
+   - `track`: the crop follows the **active speaker**, the face whose mouth moves (net of head
+     movement) clearly more than the others. It falls back to the most prominent face, or to
+     where the motion is concentrated in a faceless action shot. It moves only after a
+     confirmed jump.
    - `split`: two separated faces become stacked, zoomed halves.
-   - `blur`: slides, B-roll or no faces: the whole frame fitted over a blurred fill.
-   - `center`: fixed centre crop.
-3. **Overlays**: the caption band is streamed as raw RGBA frames into ffmpeg (Pillow-drawn, six
-   themes, word-level highlight), hook card, logo, watermark, CTA end card, punch-ins, B-roll.
-4. **Audio**: loudnorm to −14 LUFS, 48 kHz stereo AAC.
+   - `center`: fixed centre crop. Vertical output always fills the frame; this is the fallback for
+     faceless shots without a clear subject.
+   - `blur`: the whole frame over a blurred fill, only for long static shots (graphics, text
+     slides), panels of equals and landscape output.
+   Faces and motion are sampled at 4 fps.
+3. **Overlays**: the caption band is streamed as raw RGBA frames into ffmpeg (Pillow-drawn, seven
+   themes including `pop`, matched to top Shorts; word-level highlight; optional colour emoji
+   above captions with an illustratable word), hook card, logo, watermark, CTA end card,
+   punch-ins, B-roll.
+4. **Audio**: voice compression + limiter, then two-pass loudnorm to −14 LUFS (true peak
+   ≤ −1 dBTP), 48 kHz stereo AAC.
 5. **Extras**: optional intro/outro, thumbnail pick (sharpest frame with a face), SRT and ASS
    sidecars.
 
