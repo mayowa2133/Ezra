@@ -214,8 +214,12 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             graph.append(f"[in_track]scale={W}:{H}:force_original_aspect_ratio=increase,"
                          f"crop={W}:{H}:'{layout.x_expr(pcs)}':'(ih-oh)/2'[s_track]")
         if "blur" in streams:
-            graph.append(f"[in_blur]split[bb][bf];[bb]scale={W}:{H}:force_original_aspect_ratio=increase,"
-                         f"crop={W}:{H},gblur=sigma=28[bg];[bf]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
+            # the fill is blurred at quarter size: it runs for the whole clip, and at full size the
+            # blur alone costs more than the rest of the graph
+            bw, bh = W // 8 * 2, H // 8 * 2
+            graph.append(f"[in_blur]split[bb][bf];[bb]scale={bw}:{bh}:force_original_aspect_ratio=increase,"
+                         f"crop={bw}:{bh},gblur=sigma=7,scale={W}:{H}[bg];"
+                         f"[bf]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
                          f"[bg][fg]overlay=(W-w)/2:(H-h)/2[s_blur]")
         if "split" in streams:
             sp = [p for p in plans if p.mode == "split" and p.split_x]

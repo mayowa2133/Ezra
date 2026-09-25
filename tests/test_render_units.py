@@ -493,3 +493,31 @@ def test_texture_bands_are_not_lines_of_type():
     grass = rng.integers(0, 255, (540, 960), dtype=np.uint8)          # busy texture, one big blob
     grass[300:330, 100:800] = np.where(rng.random((30, 700)) < 0.5, 255, 0)  # a stripy band inside it
     assert not any(b[2] - b[0] >= 0.25 and 0.5 < b[1] < 0.65 for b in detect_overlays(grass))
+
+
+def test_text_network_finds_small_labels_and_whole_caption_lines(monkeypatch):
+    import numpy as np
+    from PIL import ImageDraw, ImageFont
+
+    from ezra.analysis import faces
+
+    reader = faces.get_text_detector()
+    if reader is None:
+        pytest.skip("PP-OCRv3 model unavailable (offline)")
+    im = Image.new("RGB", (960, 540), (70, 90, 60))
+    d = ImageDraw.Draw(im)
+    small = ImageFont.truetype(captions.find_font("bold") or "", 14)
+    big = ImageFont.truetype(captions.find_font("bold") or "", 34)
+    for k, name in enumerate(["JIMMY", "NOLAN", "TAREQ", "DARIUS", "ALISON"]):   # a roster's labels
+        d.text((300 + 75 * k, 60), name, fill=(255, 255, 255), font=small)
+    d.text((160, 480), "WE'RE AT THE FIRST HIDING SPOT", fill=(255, 255, 255), font=big,
+           stroke_width=2, stroke_fill=(0, 0, 0))
+    rgb = np.asarray(im)
+    boxes = reader.detect(rgb.mean(axis=2).astype(np.uint8), rgb)
+    labels = [b for b in boxes if b[3] < 0.2]
+    assert len(labels) >= 4, boxes
+    assert any(b[2] - b[0] >= 0.5 and b[1] >= 0.85 for b in boxes), boxes
+    monkeypatch.setenv("EZRA_TEXT_DETECTOR", "morph")
+    from ezra.config import reset_settings
+    reset_settings()
+    assert faces.get_text_detector() is None                          # offline fallback on request

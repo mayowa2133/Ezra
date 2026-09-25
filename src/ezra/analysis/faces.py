@@ -8,6 +8,10 @@ mediapipe  MediaPipe Tasks BlazeFace short-range (Apache-2.0). More robust to
 yunet      OpenCV's YuNet CNN detector (cv2.FaceDetectorYN, MIT model from the
            official opencv_zoo, ~227 KB, fetched once). Finds small, turned, dim
            and motion-blurred faces that Haar misses; no extra package.
+
+Burned-in text (captions, labels, counters) is found by PP-OCRv3's text detector (Apache-2.0,
+official opencv_zoo, ~2.4 MB, fetched once; runs on OpenCV's DNN module), or offline by a
+morphological detector (`detect_overlays`).
 """
 
 from __future__ import annotations
@@ -136,15 +140,7 @@ class YuNetDetector(FaceDetector):
 
         if not hasattr(cv2, "FaceDetectorYN"):
             raise RuntimeError("this OpenCV build has no FaceDetectorYN (needs OpenCV >= 4.5.4)")
-        model = get_settings().models_dir / self.MODEL_FILE
-        if not model.exists():
-            model.parent.mkdir(parents=True, exist_ok=True)
-            tmp = model.with_suffix(".part")
-            urllib.request.urlretrieve(self.MODEL_URL, tmp)
-            if tmp.stat().st_size != self.MODEL_BYTES:
-                tmp.unlink(missing_ok=True)
-                raise RuntimeError("YuNet model download was incomplete or changed upstream")
-            tmp.replace(model)
+        model = fetch_model(self.MODEL_URL, self.MODEL_FILE, self.MODEL_BYTES)
         self.cv2 = cv2
         self.net = cv2.FaceDetectorYN.create(str(model), "", (320, 320), self.SCORE, 0.3, 50)
         self.size: tuple[int, int] = (0, 0)
@@ -164,6 +160,74 @@ class YuNetDetector(FaceDetector):
                 continue
             out.append(Face((x + fw / 2) / w, (y + fh / 2) / h, fw / w, fh / h, score))
         return out
+
+
+def fetch_model(url: str, file: str, size: int) -> Path:
+    """A model file from the cache, downloaded once and checked by size."""
+    model = get_settings().models_dir / file
+    if not model.exists():
+        model.parent.mkdir(parents=True, exist_ok=True)
+        tmp = model.with_suffix(".part")
+        urllib.request.urlretrieve(url, tmp)
+        if tmp.stat().st_size != size:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"{file} download was incomplete or changed upstream")
+        tmp.replace(model)
+    return model
+
+
+class TextDetector:
+    """PP-OCRv3 text detection (differentiable binarization) through cv2.dnn: one box per line or
+    word of type, including small labels a morphological detector loses in busy graphics."""
+    name = "ppocr"
+    MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/text_detection_ppocr/"
+                 "text_detection_en_ppocrv3_2023may.onnx")
+    MODEL_FILE = "text_detection_en_ppocrv3_2023may.onnx"
+    MODEL_BYTES = 2423490
+
+    def __init__(self) -> None:
+        import cv2
+
+        model = fetch_model(self.MODEL_URL, self.MODEL_FILE, self.MODEL_BYTES)
+        self.cv2 = cv2
+        self.net = cv2.dnn.TextDetectionModel_DB(cv2.dnn.readNet(str(model)))
+        self.net.setBinaryThreshold(0.3)
+        self.net.setPolygonThreshold(0.5)
+        self.net.setUnclipRatio(2.0)
+        self.net.setMaxCandidates(200)
+        self.net.setInputMean((123.675, 116.28, 103.53))
+        self.net.setInputScale(tuple(1.0 / 255.0 / sd for sd in (0.229, 0.224, 0.225)))
+        self.size: tuple[int, int] = (0, 0)
+
+    def detect(self, gray: np.ndarray, rgb: np.ndarray | None = None) -> list[Box]:
+        img = (self.cv2.cvtColor(rgb, self.cv2.COLOR_RGB2BGR) if rgb is not None
+               else self.cv2.cvtColor(gray, self.cv2.COLOR_GRAY2BGR))
+        h, w = img.shape[:2]
+        size = (w // 32 * 32, (h + 31) // 32 * 32)          # the network wants multiples of 32
+        if self.size != size:
+            self.net.setInputSize(size)
+            self.size = size
+        quads, _conf = self.net.detect(img)
+        out: list[Box] = []
+        for q in quads:
+            xs, ys = [float(p[0]) for p in q], [float(p[1]) for p in q]
+            x0, y0, x1, y1 = max(0.0, min(xs)) / w, max(0.0, min(ys)) / h, min(w, max(xs)) / w, min(h, max(ys)) / h
+            if x1 - x0 > 0.01 and y1 - y0 > 0.012:
+                out.append((x0, y0, x1, y1))
+        return out
+
+
+def get_text_detector(name: str | None = None) -> TextDetector | None:
+    """PP-OCRv3 when its model is available; None means the morphological fallback."""
+    name = name or get_settings().text_detector
+    if name == "morph":
+        return None
+    try:
+        return TextDetector()
+    except Exception:
+        if name == "ppocr":
+            raise
+        return None
 
 
 def _auto() -> FaceDetector:
@@ -321,6 +385,7 @@ def _line_bands(closed: np.ndarray, x: int, y: int, bw: int, bh: int, h: int) ->
     return bands
 
 
+TEXT_EVERY = 2         # run the text network on every other sample (~65 ms a frame on CPU)
 STABLE_RANGE = 14      # grey levels a pixel may drift and still count as not moving
 MOVING_RANGE = 32      # ... and must exceed to count as moving
 MOVING_SHARE = 0.3     # the scene must be mostly in motion before stillness means "graphic"
@@ -390,9 +455,11 @@ def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 
 
 def sample_frames(media: Path, start: float, end: float, fps: float = 2.0,
                   detector: FaceDetector | None = None, progress: Callable[[float], None] | None = None,
-                  overlays: bool = False) -> Sampled:
-    """One decode: faces (with talk), motion, and optionally burned-in text/graphics boxes."""
+                  overlays: bool = False, text: TextDetector | bool = True) -> Sampled:
+    """One decode: faces (with talk), motion, and optionally burned-in text/graphics boxes
+    (PP-OCRv3 when available, else the morphological detector; `text=False` forces the latter)."""
     det = detector or get_detector()
+    reader = (text if isinstance(text, TextDetector) else get_text_detector() if text else None) if overlays else None
     w, h = video_size(media)
     sh = max(2, int(round(SAMPLE_WIDTH * h / w / 2)) * 2)
     need_rgb = isinstance(det, (MediaPipeDetector, YuNetDetector))
@@ -431,7 +498,12 @@ def sample_frames(media: Path, start: float, end: float, fps: float = 2.0,
         motion.append((i / fps, mx, share))
         prev_small = small
         if overlays:
-            texts.append((i / fps, detect_overlays(gray)))
+            if reader is None:
+                texts.append((i / fps, detect_overlays(gray)))
+            elif i % TEXT_EVERY == 0 or not texts:
+                texts.append((i / fps, reader.detect(gray, rgb)))
+            else:                                   # the network is slower; graphics hold still
+                texts.append((i / fps, list(texts[-1][1])))
             thumbs.append((i / fps, gray[::3, ::3].copy()))
         i += 1
         if progress and i % 20 == 0:

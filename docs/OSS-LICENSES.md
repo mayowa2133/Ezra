@@ -48,6 +48,7 @@ boto3-stubs (MIT), types-PyYAML (Apache-2.0).
 | Whisper weights via `Systran/faster-whisper-*` | MIT (OpenAI Whisper) | Downloaded into `EZRA_MODEL_CACHE` on first use |
 | OpenCV Haar cascades | Apache-2.0 (shipped in the OpenCV 4.x wheel) | Why OpenCV is pinned below 5 |
 | YuNet face detector (`face_detection_yunet_2023mar.onnx`, opencv_zoo) | MIT | Default face detector; 227 KB, fetched once into `EZRA_MODEL_CACHE` (size checked) |
+| PP-OCRv3 text detector (`text_detection_en_ppocrv3_2023may.onnx`, opencv_zoo, from PaddleOCR) | Apache-2.0 | Default text detector for graphics protection; 2.4 MB, fetched once into `EZRA_MODEL_CACHE` (size checked) |
 | Apple Color Emoji / Noto Color Emoji | System font / SIL OFL 1.1 | Emoji captions; used from the OS (Noto installed in the Docker image) |
 
 ## External programs (invoked as separate processes)

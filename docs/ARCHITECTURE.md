@@ -133,7 +133,10 @@ version and confidence, and skipped on re-run unless `--force`:
      slides), panels of equals, landscape output and scenes whose graphics can't be kept whole.
    - **Graphics protection** (`protect_graphics`, on by default):
      - Burned-in graphics are found two ways:
-       - a morphological text detector: lines of type, rejecting straight edges; a line that
+       - PP-OCRv3's text detector (`EZRA_TEXT_DETECTOR=auto`, a 2.4 MB opencv_zoo model fetched
+         once, run on every other sample); it finds small labels inside busy panels. Offline, or
+         with `EZRA_TEXT_DETECTOR=morph`, a morphological detector instead: lines of type,
+         rejecting straight edges; a line that
          touches scenery is split back out of the blob when it holds most of the blob's ink;
        - per scene, detailed regions that hold still while the footage moves (roster panels,
          counters, logos).

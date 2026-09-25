@@ -147,12 +147,13 @@ A 9:16 crop of a 16:9 frame keeps only 32% of the width, so it sliced through th
 
 | Clip | Decision | What it was |
 |---|---|---|
-| 6 | shown whole (2.3 s, across two shots); Ezra's captions off for 16.4–18.5 s | The editors' caption "HEY GUYS! HE'S GOT 100K ON HIM RIGHT HERE", now readable and not doubled |
+| 6 | shown whole (2.8 s, across three shots); Ezra's captions off for 16.4–19.0 s | The editors' caption "HEY GUYS! HE'S GOT 100K ON HIM RIGHT HERE", now readable and not doubled |
 | 8 | shown whole (2.0 s) | The prisoner roster as it slides in |
 | 12 | shown whole (6.2 s, 3 scenes) | The prisoner roster, on screen while the cops search |
-| 10, 12 | crop moved | Text kept whole with the speaker still framed |
-| 7, 11, 13 | unchanged | Graphics (channel logo, corner counters) already outside the crop |
-| 9 | unchanged (miss) | The roster also appears here while its highlights animate; neither detector catches it, so it is still cropped |
+| 9 | shown whole (3.3 s) | The roster while its highlights animate; caught once PP-OCRv3 was added (iteration 13) |
+| 10 | crop moved | Text kept whole with the speaker still framed |
+| 7, 11 | crop moved (small) | Text physically in the scene (a projected chat, container stencils); detectors can't tell it from graphics, and the shift is capped so the speaker stays framed |
+| 13 | unchanged | Graphics (channel logo, corner counters) already outside the crop |
 
 - **False positives:** the ones found were fixed before these numbers were taken:
   - a pipe edge;
@@ -160,10 +161,14 @@ A 9:16 crop of a 16:9 frame keeps only 32% of the width, so it sliced through th
   - rooftops in an aerial shot;
   - grass in a body-cam shot;
   - the roster's name row read as a caption.
-- **Cost:** 4.6% of total screen time is shown whole, up from 0%, and all of it is deliberate.
+- **Cost:** 6.3% of total screen time is shown whole, up from 0%, and all of it is deliberate.
   The benchmark Shorts don't have this problem, because they are composed for the vertical frame
   from the start.
-- **Speed:** detection adds about 1 s of render time per 30 s clip.
+- **Speed:**
+  - The text network costs ~40–65 ms a frame on CPU. It runs on every other sample, adding about
+    2 s of sampling per 30 s clip.
+  - Blurring the whole-frame background at quarter size saved more than that: clip 9 went from
+    28 s to 22 s. At full size the blur ran on every frame of any clip with a whole-frame scene.
 - **Double captions:** while the source's own caption is on screen, Ezra's burned-in captions
   step aside. The SRT sidecar keeps every word.
 - **Caption detection:** real captions separated cleanly from look-alikes on these clips. A
@@ -176,7 +181,7 @@ A 9:16 crop of a 16:9 frame keeps only 32% of the width, so it sliced through th
 | Dimension | Stacks up? |
 |---|---|
 | Pacing (cuts, shot length), loudness, instant start | **Yes**, matches within a few percent |
-| Framing (fills the vertical frame) | **Yes**: 0% letterboxed after iteration 10; 4.6% shown whole after iteration 11, only where the source's own graphics (captions, roster) would otherwise be sliced. Groups are framed on the densest cluster and the active speaker is tracked |
+| Framing (fills the vertical frame) | **Yes**: 0% letterboxed after iteration 10; 6.3% shown whole after iteration 13, only where the source's own graphics (captions, roster) would otherwise be sliced. Groups are framed on the densest cluster and the active speaker is tracked |
 | Speech/action balance | **Yes**: 0.73 speech share vs 0.66, longest pause 1.6 s vs 1.7 s |
 | Caption style | **Close** with the `pop` theme |
 | Openings | **Mostly.** Most now open on a reaction or the premise; a few still open on narration from the long-form ("Even in a city entirely designed to…") |
@@ -189,9 +194,9 @@ the format), the gap comes from the source, not the editing.
 
 ## Remaining work
 
-- **Animated graphics:** a panel whose highlights change (the roster in clip 9) escapes both
-  detectors. A small OCR/text-detection model (e.g. OpenCV's DB text detector) would catch it, at
-  the cost of another model download.
+- **Scene text vs. graphics:** text physically in the shot (signs, stencils, a projected screen)
+  nudges the crop like a graphic does. Telling them apart would need, for example, checking
+  whether the text moves with the camera.
 - **A "premise prefix"** for clips whose moment needs context: a 2–3 s line from the video's cold open
   stitched in front, the spoken equivalent of the title card.
 - **Collect third-party clips** of long-form videos (the like-for-like reference) through an allowed

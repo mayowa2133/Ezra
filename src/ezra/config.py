@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     model_cache: Path | None = Field(None, description="Where ML models are cached; default $EZRA_HOME/cache/models")
     diarizer: str = Field("local", description="local | pyannote | none")
     face_detector: str = Field("auto", description="auto (YuNet, Haar offline) | yunet | haar | mediapipe")
+    text_detector: str = Field("auto", description="auto (PP-OCRv3, morphological offline) | ppocr | morph")
     llm: str = Field("heuristic", description="heuristic | claude-cli | codex-cli | openai-compatible")
     llm_model: str | None = None
     llm_base_url: str | None = None
