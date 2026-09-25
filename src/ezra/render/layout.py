@@ -6,6 +6,9 @@ For each scene of the clip (output timeline) choose a layout:
   blur    no face (slides, B-roll) or a group: whole frame fitted over a blur
   center  fixed centre crop (static fallback)
 The requested layout forces a mode where it is feasible; "auto" decides per scene.
+
+Burned-in graphics (counters, name bars, source captions) are protected: a crop keeps each one
+fully in or fully out, and a scene whose large graphic can't be kept whole is shown whole instead.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from statistics import median
 
-from ..analysis.faces import Face
+from ..analysis.faces import Box, Face, Overlays
 
 JUMP = 0.12
 CONFIRM = 2
@@ -37,6 +40,8 @@ class ScenePlan:
     split_y: tuple[float, float] | None = None            # split: face centre heights
     face_w: float | None = None                           # typical face width (fraction of source width)
     faces: int = 0
+    graphics: list[Box] = field(default_factory=list)     # persistent burned-in graphics in the scene
+    protected: str | None = None                          # "moved" / "shown whole" when graphics decided it
 
 
 TALK_MIN = 0.012     # mouth movement (net of head movement) that counts as talking
@@ -146,13 +151,124 @@ def _motion_samples(motion: list[tuple[float, float | None, float]] | None, a: f
     return [(t, [Face(float(x), 0.5, 0.1, 0.1)]) for t, x in moving]
 
 
+def scene_bounds(duration: float, scene_cuts: list[float]) -> list[tuple[float, float]]:
+    bounds = [0.0] + sorted(c for c in scene_cuts if 0.3 < c < duration - 0.3) + [duration]
+    return list(zip(bounds, bounds[1:]))
+
+
+OVERLAY_PERSIST = 0.5   # share of a scene's samples a graphic must appear in (detections are noisy)
+OVERLAY_IOU = 0.4
+ROW_GAP = 0.06          # pieces this close on the same line are one graphic
+BIG_OVERLAY = 0.12      # a graphic this wide (share of source width) is worth showing the shot whole
+SUBJECT_SLACK = 0.6     # how far (share of the crop's half-width) the crop may slide off its subject
+EDGE_MARGIN = 0.006
+
+
+def _iou(a: Box, b: Box) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def persistent_overlays(overlays: Overlays | None, a: float, b: float) -> list[Box]:
+    """Graphics seen in at least half the samples of [a, b): the per-frame detector also fires on
+    lights and railings for a frame or two; burned-in graphics hold still."""
+    frames = [bs for t, bs in overlays or [] if a <= t < b]
+    if len(frames) < 2:
+        return []
+    clusters: list[list[Box]] = []
+    for bs in frames:
+        for box in bs:
+            for c in clusters:
+                if _iou(c[0], box) > OVERLAY_IOU:
+                    c.append(box)
+                    break
+            else:
+                clusters.append([box])
+    need = max(2.0, OVERLAY_PERSIST * len(frames))
+    return _rows([(float(median(x[0] for x in c)), float(median(x[1] for x in c)),
+                   float(median(x[2] for x in c)), float(median(x[3] for x in c)))
+                  for c in clusters if len(c) >= need])
+
+
+def _rows(boxes: list[Box]) -> list[Box]:
+    """Join pieces of one graphic that sit side by side (a roster's name labels, a split ticker)."""
+    merged = sorted(boxes)
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(merged)):
+            for j in range(i + 1, len(merged)):
+                a, b = merged[i], merged[j]
+                ha, hb = a[3] - a[1], b[3] - b[1]
+                overlap = min(a[3], b[3]) - max(a[1], b[1])
+                gap = max(a[0], b[0]) - min(a[2], b[2])
+                # one line of pieces of similar height; don't chain scenery into a giant box
+                if overlap >= 0.5 * min(ha, hb) and max(ha, hb) <= 2 * min(ha, hb) and gap <= ROW_GAP:
+                    merged[i] = (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+                    del merged[j]
+                    changed = True
+                    break
+            if changed:
+                break
+    return merged
+
+
+def _cut(c: float, half: float, boxes: list[Box]) -> list[Box]:
+    """Boxes a crop centred on `c` would slice through."""
+    lo, hi = c - half, c + half
+    return [b for b in boxes if b[0] + EDGE_MARGIN < lo < b[2] - EDGE_MARGIN
+            or b[0] + EDGE_MARGIN < hi < b[2] - EDGE_MARGIN]
+
+
+def protect_x(x: float, boxes: list[Box], half: float, slack: float) -> tuple[float, bool]:
+    """The crop centre nearest `x` (within `slack`) that keeps every graphic fully in or fully out.
+    Returns (centre, True), or (x, False) when no such centre exists."""
+    clamp = (lambda c: min(max(c, half), 1 - half)) if half < 0.5 else (lambda c: 0.5)
+    x = clamp(x)
+    if not _cut(x, half, boxes):
+        return x, True
+    options = {clamp(x - slack), clamp(x + slack)}
+    for b in boxes:
+        m = 2 * EDGE_MARGIN
+        options |= {clamp(b[2] - half + m), clamp(b[0] + half - m),      # fully in
+                    clamp(b[2] + half + m), clamp(b[0] - half - m)}      # fully out
+    ok = [c for c in options if abs(c - x) <= slack + 1e-9 and not _cut(c, half, boxes)]
+    return (min(ok, key=lambda c: abs(c - x)), True) if ok else (x, False)
+
+
+def _protect(sp: ScenePlan, overlays: Overlays | None, half: float, vertical: bool, auto: bool) -> None:
+    """Slide the scene's crops so graphics stay whole; show the scene whole when a large graphic
+    can't be kept whole any other way (auto layout on vertical output only)."""
+    sp.graphics = persistent_overlays(overlays, sp.start, sp.end)
+    if not sp.graphics or sp.mode not in ("track", "center"):
+        return
+    slack = SUBJECT_SLACK * half if sp.mode == "track" else half
+    moved, stuck = False, False
+    for shot in sp.shots:
+        boxes = persistent_overlays(overlays, shot.start, shot.end) or sp.graphics
+        x, ok = protect_x(shot.x, boxes, half, slack)
+        if ok and abs(x - min(max(shot.x, half), 1 - half)) > 1e-6:
+            shot.x, moved = x, True
+        if not ok and any(b[2] - b[0] >= BIG_OVERLAY for b in _cut(shot.x, half, boxes)):
+            stuck = True
+    if stuck and auto and vertical:
+        sp.mode, sp.shots, sp.protected = "blur", [], "shown whole"
+    elif moved:
+        sp.protected = "moved"
+
+
 def plan(samples: list[tuple[float, list[Face]]], duration: float, scene_cuts: list[float], requested: str,
          aspect: str, fps: float, crop_x: float | None = None,
-         motion: list[tuple[float, float | None, float]] | None = None) -> list[ScenePlan]:
-    bounds = [0.0] + sorted(c for c in scene_cuts if 0.3 < c < duration - 0.3) + [duration]
+         motion: list[tuple[float, float | None, float]] | None = None,
+         overlays: Overlays | None = None, crop_frac: float | None = None) -> list[ScenePlan]:
+    """`overlays` (burned-in graphics per sample) and `crop_frac` (crop width as a share of the
+    source width) turn on graphics protection."""
     vertical = aspect in ("9:16", "4:5")
     plans: list[ScenePlan] = []
-    for a, b in zip(bounds, bounds[1:]):
+    for a, b in scene_bounds(duration, scene_cuts):
         inside = [fs for t, fs in samples if a <= t < b]
         counts = [len(fs) for fs in inside]
         n = int(median(counts)) if counts else 0
@@ -198,6 +314,8 @@ def plan(samples: list[tuple[float, list[Face]]], duration: float, scene_cuts: l
             sp.shots = plan_shots(moving or samples, a, b, fps)
         elif mode in ("static", "center"):
             sp.shots = [Shot(a, b, crop_x if crop_x is not None else 0.5)]
+        if overlays and crop_frac and crop_frac < 1 and mode != "static":
+            _protect(sp, overlays, crop_frac / 2, vertical, requested == "auto")
         plans.append(sp)
     return plans
 

@@ -120,12 +120,54 @@ Changes:
 | Length | 36 s | 24 s |
 | Loudness | −14.2 LUFS | −14.1 LUFS |
 
+## Round 3: the source's own graphics (iteration 11)
+
+MrBeast's long-form videos carry burned-in graphics: a prisoner roster (JIMMY / NOLAN / TAREQ /
+DARIUS / ALISON), a caught counter, name bars, body-cam timestamps and the editors' own captions.
+A 9:16 crop of a 16:9 frame keeps only 32% of the width, so it sliced through them: one clip read
+"…OK ON HIM RIGHT" instead of "HEY GUYS! HE'S GOT 100K ON HIM RIGHT HERE".
+
+**Detection:**
+- **Text detector.** It finds lines of type, rejecting straight edges; a pipe's edge had passed
+  the first version.
+- **Stillness detector.** Per scene, it finds detailed regions that hold still while the footage
+  moves. That is what catches the roster: its name labels merge with the panel border into one
+  blob too tall to pass as text.
+- **Guards:**
+  - a graphic must appear in half a scene's samples;
+  - stillness needs at least 5 samples (1.2 s);
+  - a scene with more than 4 still regions is scenery (a slow push-in), not graphics.
+
+**Decision:**
+- Crops slide so each graphic is fully in or fully out, staying within 60% of the crop's
+  half-width of the subject.
+- If a large graphic can't be kept whole, the scene is shown whole.
+
+**Results on the 8 test clips** (every flagged frame checked by eye):
+
+| Clip | Decision | What it was |
+|---|---|---|
+| 6 | shown whole (1.4 s) | The editors' caption "HEY GUYS! HE'S GOT 100K ON HIM RIGHT HERE", now readable |
+| 8 | shown whole (2.0 s) | The prisoner roster as it slides in |
+| 12 | shown whole (6.2 s, 3 scenes) | The prisoner roster, on screen while the cops search |
+| 10 | crop moved | Text kept whole with the speaker still framed |
+| 7, 9, 11, 13 | unchanged | Graphics (channel logo, corner counters) already outside the crop |
+
+- **False positives:** the two found (a pipe edge, and a treeline in a slow push-in down a road)
+  were fixed before these numbers were taken.
+- **Cost:** 4.2% of total screen time is shown whole, up from 0%, and all of it is deliberate.
+  The benchmark Shorts don't have this problem, because they are composed for the vertical frame
+  from the start.
+- **Speed:** detection adds about 1 s of render time per 30 s clip.
+- **Still open:** when the source has its own caption, Ezra's captions are drawn on top of it.
+  Hiding ours for those spans is the next refinement.
+
 ## Verdict
 
 | Dimension | Stacks up? |
 |---|---|
 | Pacing (cuts, shot length), loudness, instant start | **Yes**, matches within a few percent |
-| Framing (fills the vertical frame) | **Yes**: 0% letterboxed after iteration 10, groups framed on the densest cluster, active speaker tracked |
+| Framing (fills the vertical frame) | **Yes**: 0% letterboxed after iteration 10; 4.2% shown whole after iteration 11, only where the source's own graphics (captions, roster) would otherwise be sliced. Groups are framed on the densest cluster and the active speaker is tracked |
 | Speech/action balance | **Yes**: 0.73 speech share vs 0.66, longest pause 1.6 s vs 1.7 s |
 | Caption style | **Close** with the `pop` theme |
 | Openings | **Mostly.** Most now open on a reaction or the premise; a few still open on narration from the long-form ("Even in a city entirely designed to…") |
@@ -138,8 +180,8 @@ the format), the gap comes from the source, not the editing.
 
 ## Remaining work
 
-- **Protect the source's own graphics** (counters, name bars) from cropping. This needs text/UI
-  detection.
+- **Captions over source captions:** hide Ezra's captions where the source shows its own (both
+  are on screen in clip 6).
 - **A "premise prefix"** for clips whose moment needs context: a 2–3 s line from the video's cold open
   stitched in front, the spoken equivalent of the title card.
 - **Collect third-party clips** of long-form videos (the like-for-like reference) through an allowed

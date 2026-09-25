@@ -25,6 +25,7 @@ class RenderSpec(BaseModel):
     aspect: str = "9:16"
     layout: str = "auto"
     crop_x: float | None = Field(None, ge=0, le=1, description="Pin the crop (0 left .. 1 right); overrides tracking")
+    protect_graphics: bool = True     # keep burned-in text/graphics fully in or out of the crop
     captions: bool = True
     caption_theme: str = "bold"
     caption_emoji: bool = False       # an emoji above captions with an illustratable word

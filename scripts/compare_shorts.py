@@ -21,7 +21,7 @@ import numpy as np
 
 import ezra.transcription  # noqa: F401  (import order)
 from ezra.analysis import detect_scenes
-from ezra.analysis.faces import get_detector, sample_faces_and_motion
+from ezra.analysis.faces import get_detector, sample_frames
 
 MODELS = str(Path.home() / ".cache" / "ezra" / "models")
 _whisper = None
@@ -102,7 +102,7 @@ def analyse(label, path):
     first2 = " ".join(wd.word.strip() for wd in words if wd.start < (first or 0) + 2.0)
     fr = frames_gray(path)
     lb = [letterboxed(f) for f in fr]
-    faces, _motion = sample_faces_and_motion(path, 0, dur, fps=2.0, detector=get_detector("auto"))
+    faces = sample_frames(path, 0, dur, fps=2.0, detector=get_detector("auto")).faces
     with_face = [fs for _, fs in faces if fs]
     fw = [max(f.w for f in fs) for fs in with_face]
     fcx = [max(fs, key=lambda f: f.w).cx for fs in with_face]

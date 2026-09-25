@@ -124,14 +124,14 @@ def test_real_render_split_layout_with_captions(tmp_path):
 
     import sys
     comp = sys.modules["ezra.render.compose"]   # the package re-exports a function named `compose`
-    orig = comp.sample_faces_and_motion
-    comp.sample_faces_and_motion = lambda *a, **k: (faces, [])
+    orig = comp.sample_frames
+    comp.sample_frames = lambda *a, **k: comp.Sampled(faces, [], [])
     try:
         spec = RenderSpec(layout="split", caption_theme="clean", remove_silence=False, remove_fillers=False,
                           hook_text="Hook card", thumbnail=False)
         res = compose(src, 0.0, 6.0, ws, [], spec, tmp_path / "out.mp4", lambda k: Path(k), detector=Fixed())
     finally:
-        comp.sample_faces_and_motion = orig
+        comp.sample_frames = orig
     info = probe(res.video)
     assert (info["width"], info["height"]) == (1080, 1920) and info["has_audio"]
     assert abs(info["duration"] - 6.0) < 0.2 and res.layout == "split"
@@ -299,3 +299,87 @@ def test_edits_back_off_to_respect_the_minimum_length(monkeypatch):
     short = SimpleNamespace(min_duration=17.5)
     quiet, rs = render._fit_edits(cand, short, words, RenderSpec())
     assert quiet is None and not rs.remove_silence             # nothing may be cut
+
+
+def test_detect_overlays_finds_burned_in_text_not_plain_picture():
+    import numpy as np
+    from PIL import ImageDraw, ImageFont
+
+    from ezra.analysis.faces import detect_overlays
+
+    im = Image.new("L", (960, 540), 90)
+    d = ImageDraw.Draw(im)
+    d.rectangle((600, 440, 900, 490), fill=20)                         # a name bar
+    try:
+        font = ImageFont.truetype(captions.find_font("bold") or "", 30)
+    except Exception:
+        font = ImageFont.load_default(30)
+    d.text((615, 448), "POLICE HQ 04:16", fill=255, font=font)
+    boxes = detect_overlays(np.asarray(im))
+    assert any(b[0] >= 0.6 and b[2] <= 0.95 and b[1] >= 0.8 and b[3] <= 0.92 for b in boxes), boxes
+    plain = Image.new("L", (960, 540), 90)
+    ImageDraw.Draw(plain).ellipse((300, 100, 600, 400), fill=160)      # a soft shape, no type
+    assert detect_overlays(np.asarray(plain)) == []
+
+
+def test_crops_keep_graphics_whole_or_show_the_shot_whole():
+    t = [i / 2 for i in range(20)]
+    face = [(x, [Face(0.3, 0.4, 0.1, 0.15)]) for x in t]
+    half = 0.316 / 2
+    # a counter straddling the right edge of the face crop [0.142, 0.458]
+    counter = (0.40, 0.05, 0.48, 0.10)
+    flicker = (0.02, 0.5, 0.2, 0.55)                                   # a light, seen in one frame
+    ov = [(x, [counter] + ([flicker] if i == 3 else [])) for i, x in enumerate(t)]
+    p = layout.plan(face, 10, [], "auto", "9:16", 2.0, overlays=ov, crop_frac=0.316)[0]
+    x = p.shots[0].x
+    assert p.mode == "track" and p.protected == "moved" and len(p.graphics) == 1
+    assert x - half <= counter[0] and counter[2] <= x + half            # the counter is fully in
+    assert abs(x - 0.3) <= 0.6 * half                                   # and the speaker stays framed
+    assert layout.plan(face, 10, [], "auto", "9:16", 2.0, crop_frac=0.316)[0].shots[0].x == pytest.approx(0.3)
+    # a wide source caption across the middle can't be kept whole by any crop: show the shot whole
+    caption = [(x, [(0.2, 0.85, 0.8, 0.92)]) for x in t]
+    w = layout.plan(face, 10, [], "auto", "9:16", 2.0, overlays=caption, crop_frac=0.316)[0]
+    assert w.mode == "blur" and w.protected == "shown whole"
+    forced = layout.plan(face, 10, [], "track", "9:16", 2.0, overlays=caption, crop_frac=0.316)[0]
+    assert forced.mode == "track"                                       # an explicit layout is respected
+    # protect_x alone: already clear stays put; a graphic can also be pushed fully out
+    assert layout.protect_x(0.5, [(0.0, 0.1, 0.1, 0.2)], half, 0.1) == (0.5, True)
+    c, ok = layout.protect_x(0.5, [(0.62, 0.1, 0.9, 0.2)], half, 0.1)
+    assert ok and c + half <= 0.62
+
+
+def test_stillness_finds_a_graphic_over_moving_footage_and_rows_join():
+    import numpy as np
+
+    from ezra.analysis.faces import stable_overlays
+
+    rng = np.random.default_rng(0)
+    frames = []
+    for _ in range(8):
+        f = rng.integers(0, 255, (180, 320), dtype=np.uint8)          # handheld footage: all moving
+        f[140:170, 100:220] = 30
+        f[148:162, 110:210:6] = 250                                    # a pasted panel with detail
+        frames.append(f)
+    boxes = stable_overlays(frames)
+    assert len(boxes) == 1 and boxes[0][0] <= 0.32 and boxes[0][2] >= 0.65 and boxes[0][1] >= 0.75
+    locked = [np.full((180, 320), 90, np.uint8)] * 8                   # a locked-off shot says nothing
+    assert stable_overlays(locked) == []
+    pieces = [(0.28, 0.9, 0.35, 0.96), (0.40, 0.91, 0.47, 0.97), (0.52, 0.92, 0.6, 0.98), (0.1, 0.1, 0.2, 0.15)]
+    assert sorted(layout._rows(pieces)) == [(0.1, 0.1, 0.2, 0.15), (0.28, 0.9, 0.6, 0.98)]
+
+
+def test_stillness_ignores_scenery_that_barely_moves():
+    import numpy as np
+
+    from ezra.analysis.faces import stable_overlays
+
+    rng = np.random.default_rng(1)
+    base = rng.integers(0, 255, (180, 320), dtype=np.uint8)
+    frames = []
+    for _ in range(8):
+        f = rng.integers(0, 255, (180, 320), dtype=np.uint8)
+        for k in range(6):                                           # a slow push-in: many patches
+            f[10:40, 20 + 50 * k:45 + 50 * k] = base[10:40, 20 + 50 * k:45 + 50 * k]   # hold still
+        frames.append(f)
+    assert stable_overlays(frames) == []
+    assert stable_overlays(frames[:4]) == []                         # too brief to judge

@@ -130,8 +130,20 @@ version and confidence, and skipped on re-run unless `--force`:
    - `center`: fixed centre crop. Vertical output always fills the frame; this is the fallback for
      faceless shots without a clear subject.
    - `blur`: the whole frame over a blurred fill, only for long static shots (graphics, text
-     slides), panels of equals and landscape output.
-   Faces and motion are sampled at 4 fps.
+     slides), panels of equals, landscape output and scenes whose graphics can't be kept whole.
+   - **Graphics protection** (`protect_graphics`, on by default):
+     - Burned-in graphics are found two ways:
+       - a morphological text detector (lines of type, rejecting straight edges);
+       - per scene, detailed regions that hold still while the footage moves (roster panels,
+         counters, logos).
+     - A graphic counts only if it appears in half the scene's samples, and pieces on one row are
+       joined.
+     - Each crop then slides (at most 60% of its half-width off its subject) so every graphic is
+       fully in or fully out.
+     - A large graphic (≥ 12% of the width) that no crop can keep whole sends the scene to
+       `blur` (auto layout, vertical output).
+     - Decisions are recorded per scene in the render record (`graphics`, `protected`).
+   Faces, motion and graphics are sampled at 4 fps in one decode.
 3. **Overlays**: the caption band is streamed as raw RGBA frames into ffmpeg (Pillow-drawn, seven
    themes including `pop`, matched to top Shorts; word-level highlight; optional colour emoji
    above captions with an illustratable word), hook card, logo, watermark, CTA end card,

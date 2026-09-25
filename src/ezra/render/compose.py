@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from ..analysis.faces import FaceDetector, get_detector, sample_faces_and_motion
+from ..analysis.faces import FaceDetector, Sampled, get_detector, sample_frames
 from ..transcription.base import Word
 from . import captions as cap
 from . import edl, layout
@@ -183,10 +183,15 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         say(0.15, "finding faces")
         need_faces = spec.layout in ("auto", "track", "split") and spec.crop_x is None and info["width"]
         # 4 samples/s: fast-cut edits hold a shot for ~1-2 s, too short to find a face at 2/s
-        samples, motion = sample_faces_and_motion(media, 0 if edited else start, duration if edited else end,
-                                                  fps=LAYOUT_FPS, detector=detector or get_detector()) \
-            if need_faces else ([], [])
-        plans = layout.plan(samples, duration, cuts, spec.layout, spec.aspect, LAYOUT_FPS, spec.crop_x, motion) \
+        sampled = sample_frames(media, 0 if edited else start, duration if edited else end, fps=LAYOUT_FPS,
+                                detector=detector or get_detector(), overlays=spec.protect_graphics) \
+            if need_faces else Sampled([], [], [])
+        sampled.add_stable_overlays(layout.scene_bounds(duration, cuts))
+        # the track crop's width as a share of the source width (0.316 for 16:9 into 9:16)
+        crop_frac = min(1.0, (W / H) / (info["width"] / info["height"])) \
+            if info["width"] and info["height"] else None
+        plans = layout.plan(sampled.faces, duration, cuts, spec.layout, spec.aspect, LAYOUT_FPS, spec.crop_x,
+                            sampled.motion, sampled.overlays, crop_frac) \
             if info["width"] else [layout.ScenePlan(0, duration, "blur")]
         modes = {p.mode for p in plans}
 
@@ -392,6 +397,10 @@ def _scene_summary(p: layout.ScenePlan) -> dict[str, Any]:
         d["shots"] = [[round(sh.start, 2), round(sh.end, 2), round(sh.x, 4)] for sh in p.shots]
     if p.split_x:
         d["split_x"] = [round(x, 4) for x in p.split_x]
+    if p.graphics:
+        d["graphics"] = [[round(v, 3) for v in b] for b in p.graphics]
+    if p.protected:
+        d["protected"] = p.protected
     return d
 
 

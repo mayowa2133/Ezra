@@ -17,7 +17,7 @@ import subprocess
 import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -247,10 +247,110 @@ def _motion(prev: np.ndarray | None, cur: np.ndarray) -> tuple[float | None, flo
     return cx, near
 
 
+Box = tuple[float, float, float, float]            # x0, y0, x1, y1 as fractions of the frame
+Overlays = list[tuple[float, list[Box]]]           # (t, burned-in text / graphics boxes)
+
+
+STROKE_DENSITY = 1.5   # on/off changes per scanline, per line-height of width
+
+
+def detect_overlays(gray: np.ndarray) -> list[Box]:
+    """Burned-in text and graphics (counters, name bars, badges, captions): the classic
+    morphological text detector. High-contrast strokes, joined horizontally into line-shaped
+    blobs, kept when their size, stroke fill and contrast look like type. Noisy frame by frame
+    (lights, railings), so callers keep only boxes that persist across samples."""
+    import cv2
+
+    h, w = gray.shape
+    grad = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+    otsu, _ = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    bw = cv2.threshold(grad, max(60.0, otsu), 255, cv2.THRESH_BINARY)[1]
+    closed = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (max(9, w // 60), 3)))
+    n, _labels, stats, _centroids = cv2.connectedComponentsWithStats(closed, connectivity=8)
+    out: list[Box] = []
+    for i in range(1, n):
+        x, y, bw_, bh, _area = (int(v) for v in stats[i])
+        if not (h * 0.018 <= bh <= h * 0.12 and bw_ >= 2.2 * bh and bw_ >= w * 0.035):
+            continue
+        roi, strokes = gray[y:y + bh, x:x + bw_], bw[y:y + bh, x:x + bw_]
+        fill = float((strokes > 0).mean())
+        if not (0.18 <= fill <= 0.75 and (float((roi > 200).mean()) > 0.08 or float((roi < 70).mean()) > 0.25)):
+            continue
+        # type is a row of vertical strokes: many on/off changes along each scanline, about one
+        # letter per line-height of width. An edge (a pipe, a railing, a horizon) has almost none.
+        mid = strokes[bh // 5: max(bh // 5 + 1, bh - bh // 5)] > 0
+        changes = float(np.median(np.count_nonzero(np.diff(mid, axis=1), axis=1)))
+        if changes * bh / bw_ >= STROKE_DENSITY:
+            out.append((x / w, y / h, (x + bw_) / w, (y + bh) / h))
+    return out
+
+
+STABLE_RANGE = 14      # grey levels a pixel may drift and still count as not moving
+MOVING_RANGE = 32      # ... and must exceed to count as moving
+MOVING_SHARE = 0.3     # the scene must be mostly in motion before stillness means "graphic"
+MAX_GRAPHICS = 4       # more still regions than this is scenery (a slow push-in), not pasted graphics
+
+
+def stable_overlays(frames: list[np.ndarray]) -> list[Box]:
+    """Graphics pasted over moving footage (a roster panel, a counter, a logo): detailed regions
+    that hold perfectly still while most of the picture moves. Says nothing about a locked-off
+    shot, where the whole background holds still too."""
+    import cv2
+
+    if len(frames) < 5:
+        return []           # under ~1.2 s at 4 fps the camera hasn't moved enough to tell
+    stack = np.stack(frames).astype(np.int16)
+    spread = np.percentile(stack, 90, axis=0) - np.percentile(stack, 10, axis=0)
+    if float((spread > MOVING_RANGE).mean()) < MOVING_SHARE:
+        return []
+    still = np.median(stack, axis=0).astype(np.uint8)
+    grad = cv2.morphologyEx(still, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+    detail = (grad > 40) & (spread < STABLE_RANGE)
+    h, w = still.shape
+    joined = cv2.morphologyEx(detail.astype(np.uint8) * 255, cv2.MORPH_CLOSE,
+                              cv2.getStructuringElement(cv2.MORPH_RECT, (max(5, w // 40), max(3, h // 40))))
+    n, _labels, stats, _centroids = cv2.connectedComponentsWithStats(joined, connectivity=8)
+    out: list[Box] = []
+    for i in range(1, n):
+        x, y, bw_, bh, _area = (int(v) for v in stats[i])
+        if bw_ < w * 0.03 or bh < h * 0.02 or bh > 0.3 * h or bw_ * bh > 0.15 * w * h \
+                or (bw_ > 0.9 * w and bh < 0.04 * h):
+            continue            # specks; scenery that happens to hold still; a source letterbox edge
+        if float(detail[y:y + bh, x:x + bw_].mean()) >= 0.08:
+            out.append((x / w, y / h, (x + bw_) / w, (y + bh) / h))
+    out = [b for b in out if not any(o != b and o[0] <= b[0] and o[1] <= b[1] and b[2] <= o[2] and b[3] <= o[3]
+                                     for o in out)]      # a panel's inner detail is the same graphic
+    return out if len(out) <= MAX_GRAPHICS else []
+
+
+@dataclass
+class Sampled:
+    faces: Samples
+    motion: Motion
+    overlays: Overlays
+    thumbs: list[tuple[float, np.ndarray]] = field(default_factory=list)   # small greys for stillness
+
+    def add_stable_overlays(self, bounds: list[tuple[float, float]]) -> None:
+        """Per scene, add the graphics that hold still over moving footage to every sample."""
+        for a, b in bounds:
+            boxes = stable_overlays([f for t, f in self.thumbs if a <= t < b])
+            for t, bs in self.overlays:
+                if boxes and a <= t < b:
+                    bs.extend(boxes)
+
+
 def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 2.0,
                             detector: FaceDetector | None = None,
                             progress: Callable[[float], None] | None = None) -> tuple[Samples, Motion]:
     """Faces per sampled frame, plus a motion track (what moved between samples), from one decode."""
+    s = sample_frames(media, start, end, fps, detector, progress)
+    return s.faces, s.motion
+
+
+def sample_frames(media: Path, start: float, end: float, fps: float = 2.0,
+                  detector: FaceDetector | None = None, progress: Callable[[float], None] | None = None,
+                  overlays: bool = False) -> Sampled:
+    """One decode: faces (with talk), motion, and optionally burned-in text/graphics boxes."""
     det = detector or get_detector()
     w, h = video_size(media)
     sh = max(2, int(round(SAMPLE_WIDTH * h / w / 2)) * 2)
@@ -263,6 +363,8 @@ def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 
     assert proc.stdout is not None
     out: Samples = []
     motion: Motion = []
+    texts: Overlays = []
+    thumbs: list[tuple[float, np.ndarray]] = []
     prev_small: np.ndarray | None = None
     prev_faces: list[tuple[Face, tuple[np.ndarray, np.ndarray] | None]] = []
     total = max(1, int((end - start) * fps))
@@ -287,8 +389,11 @@ def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 
         mx, share = _motion(prev_small, small)
         motion.append((i / fps, mx, share))
         prev_small = small
+        if overlays:
+            texts.append((i / fps, detect_overlays(gray)))
+            thumbs.append((i / fps, gray[::3, ::3].copy()))
         i += 1
         if progress and i % 20 == 0:
             progress(min(i / total, 1.0))
     proc.wait()
-    return out, motion
+    return Sampled(out, motion, texts, thumbs)

@@ -55,7 +55,7 @@ database.
 | `ezra_create_candidate` | `source_id`, `start`, `end`, `title?`, `hook?`, `hook_type?`, `reason?` | Snapped, scored candidate + edge warnings |
 | `ezra_score_candidate` | `candidate_id`, `scores` (nine factors 0–100), `notes?`, `hook?`, `title?`, `hook_type?`, `compliant?`, `compliance_notes?` | Re-ranked candidate (`scorer: agent+heuristic`) |
 | `ezra_rank_candidates` | `campaign?`, `source_id?`, `use_model?` | Job |
-| `ezra_render_candidate` | `candidate_id`, `spec?` | Job (spec: aspect, layout, caption_theme, punch_in, remove_silence, hook_overlay, …) |
+| `ezra_render_candidate` | `candidate_id`, `spec?` | Job (spec: aspect, layout, caption_theme, punch_in, remove_silence, hook_overlay, protect_graphics, …) |
 | `ezra_render_top` | `campaign?`, `source_id?`, `top?`, `spec?` | Job |
 | `ezra_list_clips` | `campaign?`, `status?` | Clips with current version |
 | `ezra_review_queue` | `campaign?` | Review cards (scores, reasons, compliance, EV, video path) |
