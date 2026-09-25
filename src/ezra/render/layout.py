@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from statistics import median
+from typing import Any
 
 from ..analysis.faces import Box, Face, Overlays
 
@@ -216,6 +217,31 @@ def _rows(boxes: list[Box]) -> list[Box]:
     return merged
 
 
+GRAPHIC_RUN = 3        # samples a large graphic must stay (or stay gone) to split a scene around it
+CUT_SNAP = 0.5         # a graphic appearing this close to a scene cut arrived with the cut
+
+
+def graphic_changes(overlays: Overlays, fps: float, scene_cuts: list[float], duration: float) -> list[float]:
+    """Times inside a scene where a large graphic comes or goes (a caption that runs across a
+    cut, a counter popping up), so the part with it and the part without are planned apart."""
+    present = [(t, any(b[2] - b[0] >= BIG_OVERLAY for b in bs)) for t, bs in overlays]
+    runs: list[list[Any]] = []            # [first t, last t, present, samples]
+    for t, on in present:
+        if runs and runs[-1][2] == on:
+            runs[-1][1], runs[-1][3] = t, runs[-1][3] + 1
+        else:
+            runs.append([t, t, on, 1])
+    step = 1 / fps
+    out: list[float] = []
+    for prev, run in zip(runs, runs[1:]):
+        if prev[3] < GRAPHIC_RUN or run[3] < GRAPHIC_RUN:
+            continue
+        c = round(run[0] - step / 2, 3)
+        if 0.3 < c < duration - 0.3 and all(abs(c - x) > CUT_SNAP for x in scene_cuts + out):
+            out.append(c)
+    return out
+
+
 def _cut(c: float, half: float, boxes: list[Box]) -> list[Box]:
     """Boxes a crop centred on `c` would slice through."""
     lo, hi = c - half, c + half
@@ -268,6 +294,8 @@ def plan(samples: list[tuple[float, list[Face]]], duration: float, scene_cuts: l
     source width) turn on graphics protection."""
     vertical = aspect in ("9:16", "4:5")
     plans: list[ScenePlan] = []
+    if overlays and crop_frac and crop_frac < 1:
+        scene_cuts = scene_cuts + graphic_changes(overlays, fps, scene_cuts, duration)
     for a, b in scene_bounds(duration, scene_cuts):
         inside = [fs for t, fs in samples if a <= t < b]
         counts = [len(fs) for fs in inside]
@@ -318,6 +346,83 @@ def plan(samples: list[tuple[float, list[Face]]], duration: float, scene_cuts: l
             _protect(sp, overlays, crop_frac / 2, vertical, requested == "auto")
         plans.append(sp)
     return plans
+
+
+SOURCE_CAPTION_W = 0.25    # a text line this wide (share of source width) low in the frame is a caption
+SOURCE_CAPTION_Y = 0.55    # ... with its centre below this height
+SOURCE_CAPTION_MIN = 2     # consecutive samples, so a flicker of texture doesn't count
+SOURCE_CAPTION_GAP = 0.5   # seconds between two runs that still count as one caption
+SOURCE_CAPTION_NEIGHBOUR = 0.08   # another piece this close on the same row makes it a row of labels
+
+
+def _visible_share(box: Box, sp: ScenePlan, t: float, half: float) -> float:
+    """How much of a source box's width the output shows at time t."""
+    if sp.mode == "blur":
+        return 1.0
+    if sp.mode not in ("track", "center", "static") or not sp.shots:
+        return 0.0
+    shot = next((s for s in sp.shots if s.start <= t < s.end), sp.shots[-1])
+    c = min(max(shot.x, half), 1 - half) if half < 0.5 else 0.5
+    inside = max(0.0, min(box[2], c + half) - max(box[0], c - half))
+    return inside / max(1e-6, box[2] - box[0])
+
+
+def _in_panel(line: Box, panels: list[Box]) -> bool:
+    """A line of type inside a still panel much taller than itself: a graphic's label (a roster's
+    names), not a caption."""
+    lh = line[3] - line[1]
+    return any(p[0] - 0.01 <= line[0] and line[2] <= p[2] + 0.01 and p[1] - 0.01 <= line[1]
+               and line[3] <= p[3] + 0.01 and p[3] - p[1] >= 2 * lh for p in panels)
+
+
+def _alone(line: Box, boxes: list[Box]) -> bool:
+    """No other piece of type beside it on the same row. A roster or scoreboard is a row of
+    separate labels; a caption line stands alone."""
+    lh = line[3] - line[1]
+    for b in boxes:
+        overlap = min(line[3], b[3]) - max(line[1], b[1])
+        gap = max(line[0], b[0]) - min(line[2], b[2])
+        if 0 < gap <= SOURCE_CAPTION_NEIGHBOUR and overlap >= 0.5 * min(lh, b[3] - b[1]):
+            return False
+    return True
+
+
+def source_caption_spans(plans: list[ScenePlan], overlays: Overlays | None, crop_frac: float | None,
+                         fps: float, panels: dict[float, list[Box]] | None = None) -> list[tuple[float, float]]:
+    """When the output shows the source's own burned-in captions: a wide line of type low in the
+    frame, on screen for a few samples, not part of a larger panel. Ezra's captions step aside
+    there instead of stacking a second set of words over the first."""
+    if not overlays or not plans:
+        return []
+    half = (crop_frac or 1.0) / 2
+    hits: list[float] = []
+    for t, boxes in overlays:
+        sp = next((p for p in plans if p.start <= t < p.end), plans[-1])
+        around = (panels or {}).get(t, [])
+        # one detected line (the detector already joins a caption's words); separate labels in a
+        # row, like a roster's names, aren't a caption
+        for b in boxes:
+            if (b[2] - b[0] >= SOURCE_CAPTION_W and b[3] - b[1] <= 0.12 and (b[1] + b[3]) / 2 >= SOURCE_CAPTION_Y
+                    and _alone(b, boxes) and not _in_panel(b, around) and _visible_share(b, sp, t, half) >= 0.5):
+                hits.append(t)
+                break
+    runs: list[tuple[float, float, int]] = []
+    step = 1 / fps
+    for t in hits:
+        if runs and t - runs[-1][1] <= step * 1.5:
+            runs[-1] = (runs[-1][0], t, runs[-1][2] + 1)
+        else:
+            runs.append((t, t, 1))
+    spans: list[tuple[float, float]] = []
+    for first, last, n in runs:
+        if n < SOURCE_CAPTION_MIN:
+            continue
+        lo, hi = round(max(0.0, first - step / 2), 3), round(last + step, 3)
+        if spans and lo - spans[-1][1] <= SOURCE_CAPTION_GAP:
+            spans[-1] = (spans[-1][0], hi)         # a missed detection doesn't flash ours back on
+        else:
+            spans.append((lo, hi))
+    return spans
 
 
 def x_expr(pieces: list[tuple[float, float, float]], axis: str = "x") -> str:

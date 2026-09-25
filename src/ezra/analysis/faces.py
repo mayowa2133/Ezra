@@ -252,6 +252,8 @@ Overlays = list[tuple[float, list[Box]]]           # (t, burned-in text / graphi
 
 
 STROKE_DENSITY = 1.5   # on/off changes per scanline, per line-height of width
+BAND_GAP = 6           # px (at 960 wide) of empty columns that split one band into separate pieces
+BAND_INK = 0.5         # share of a tall blob's ink a line band must hold (captions: 0.85+, texture: < 0.3)
 
 
 def detect_overlays(gray: np.ndarray) -> list[Box]:
@@ -269,20 +271,54 @@ def detect_overlays(gray: np.ndarray) -> list[Box]:
     n, _labels, stats, _centroids = cv2.connectedComponentsWithStats(closed, connectivity=8)
     out: list[Box] = []
     for i in range(1, n):
-        x, y, bw_, bh, _area = (int(v) for v in stats[i])
-        if not (h * 0.018 <= bh <= h * 0.12 and bw_ >= 2.2 * bh and bw_ >= w * 0.035):
+        cx, cy, cw, ch, _area = (int(v) for v in stats[i])
+        if cw < w * 0.035:
             continue
-        roi, strokes = gray[y:y + bh, x:x + bw_], bw[y:y + bh, x:x + bw_]
-        fill = float((strokes > 0).mean())
-        if not (0.18 <= fill <= 0.75 and (float((roi > 200).mean()) > 0.08 or float((roi < 70).mean()) > 0.25)):
-            continue
-        # type is a row of vertical strokes: many on/off changes along each scanline, about one
-        # letter per line-height of width. An edge (a pipe, a railing, a horizon) has almost none.
-        mid = strokes[bh // 5: max(bh // 5 + 1, bh - bh // 5)] > 0
-        changes = float(np.median(np.count_nonzero(np.diff(mid, axis=1), axis=1)))
-        if changes * bh / bw_ >= STROKE_DENSITY:
-            out.append((x / w, y / h, (x + bw_) / w, (y + bh) / h))
+        for x, y, bw_, bh in _line_bands(closed, cx, cy, cw, ch, h):
+            if not (h * 0.018 <= bh <= h * 0.12 and bw_ >= 2.2 * bh and bw_ >= w * 0.035):
+                continue
+            roi, strokes = gray[y:y + bh, x:x + bw_], bw[y:y + bh, x:x + bw_]
+            fill = float((strokes > 0).mean())
+            if not (0.18 <= fill <= 0.75 and (float((roi > 200).mean()) > 0.08 or float((roi < 70).mean()) > 0.25)):
+                continue
+            # type is a row of vertical strokes: many on/off changes along each scanline, about one
+            # letter per line-height of width. An edge (a pipe, a railing, a horizon) has almost none.
+            mid = strokes[bh // 5: max(bh // 5 + 1, bh - bh // 5)] > 0
+            changes = float(np.median(np.count_nonzero(np.diff(mid, axis=1), axis=1)))
+            if changes * bh / bw_ >= STROKE_DENSITY:
+                out.append((x / w, y / h, (x + bw_) / w, (y + bh) / h))
     return out
+
+
+def _line_bands(closed: np.ndarray, x: int, y: int, bw: int, bh: int, h: int) -> list[tuple[int, int, int, int]]:
+    """A blob as its lines of type. A line that touches scenery (a caption over a door frame)
+    joins it into one tall blob; the line's rows stay mostly filled, the scenery's don't."""
+    if bh <= h * 0.12:
+        return [(x, y, bw, bh)]
+    blob = closed[y:y + bh, x:x + bw] > 0
+    ink = max(1, int(blob.sum()))
+    rows = blob.mean(axis=1) >= 0.5
+    bands: list[tuple[int, int, int, int]] = []
+    r = 0
+    while r < bh:
+        if not rows[r]:
+            r += 1
+            continue
+        start = r
+        while r < bh and rows[r]:
+            r += 1
+        # a line's words are already joined, so a gap left in the band separates different things
+        # (a roster's name labels under their portraits)
+        cols = np.flatnonzero((closed[y + start:y + r, x:x + bw] > 0).mean(axis=0) >= 0.2)
+        if cols.size:
+            breaks = np.flatnonzero(np.diff(cols) > BAND_GAP) + 1
+            for run in np.split(cols, breaks):
+                piece = blob[start:r, int(run[0]):int(run[-1]) + 1]
+                # the line must be most of the blob: a caption grazing a door frame is; a band of
+                # texture (rooftops, grass, a panel's inner rows) is a sliver of a busy blob
+                if piece.sum() >= BAND_INK * ink:
+                    bands.append((x + int(run[0]), y + start, int(run[-1] - run[0] + 1), r - start))
+    return bands
 
 
 STABLE_RANGE = 14      # grey levels a pixel may drift and still count as not moving
@@ -327,16 +363,21 @@ def stable_overlays(frames: list[np.ndarray]) -> list[Box]:
 class Sampled:
     faces: Samples
     motion: Motion
-    overlays: Overlays
+    overlays: Overlays                                                     # text lines per sample
     thumbs: list[tuple[float, np.ndarray]] = field(default_factory=list)   # small greys for stillness
+    stable: dict[float, list[Box]] = field(default_factory=dict)          # still graphics per sample
 
     def add_stable_overlays(self, bounds: list[tuple[float, float]]) -> None:
-        """Per scene, add the graphics that hold still over moving footage to every sample."""
+        """Per scene, find the graphics that hold still over moving footage."""
         for a, b in bounds:
             boxes = stable_overlays([f for t, f in self.thumbs if a <= t < b])
-            for t, bs in self.overlays:
+            for t, _bs in self.overlays:
                 if boxes and a <= t < b:
-                    bs.extend(boxes)
+                    self.stable[t] = boxes
+
+    def graphics(self) -> Overlays:
+        """Every graphic per sample: text lines plus still panels."""
+        return [(t, bs + self.stable.get(t, [])) for t, bs in self.overlays]
 
 
 def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 2.0,

@@ -98,7 +98,9 @@ ezra optimize demo                 # --apply writes the suggested weights
 - `ezra render` options map onto the render spec: `--aspect 9:16|1:1|16:9|4:5`, `--theme
   clean|bold|karaoke|cinematic|minimal|high-impact`, `--layout auto|track|split|blur|center`,
   `--punch-in`, `--no-silence-removal`, `--no-filler-removal`. Spec fields without a flag (for
-  example `protect_graphics: false` to let crops ignore on-screen text, or `caption_emoji`) go
+  example `protect_graphics: false` to let crops ignore on-screen text,
+  `yield_to_source_captions: false` to keep Ezra's captions over the source's own, or
+  `caption_emoji`) go
   through a brand kit or the API/MCP `spec`.
 - `ezra publish --private` posts with the most private visibility each platform supports (TikTok
   SELF_ONLY, YouTube private; Instagram has no private posts and refuses).

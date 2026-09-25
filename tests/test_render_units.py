@@ -383,3 +383,113 @@ def test_stillness_ignores_scenery_that_barely_moves():
         frames.append(f)
     assert stable_overlays(frames) == []
     assert stable_overlays(frames[:4]) == []                         # too brief to judge
+
+
+def test_source_caption_spans_only_count_visible_lasting_captions():
+    t = [i / 4 for i in range(24)]                                   # 6 s at 4 fps
+    caption = (0.1, 0.86, 0.9, 0.93)
+    ov = [(x, [caption] if 1.0 <= x < 3.0 else []) for x in t]
+    whole = [layout.ScenePlan(0, 6, "blur")]
+    assert layout.source_caption_spans(whole, ov, 0.316, 4.0) == [(0.875, 3.0)]
+    flicker = [(x, [caption] if x == 2.0 else []) for x in t]
+    assert layout.source_caption_spans(whole, flicker, 0.316, 4.0) == []
+    title = [(x, [(0.1, 0.05, 0.9, 0.12)]) for x in t]               # a wide title at the top
+    assert layout.source_caption_spans(whole, title, 0.316, 4.0) == []
+    narrow = (0.0, 0.86, 0.3, 0.93)                                  # cropped out of a centre crop
+    crop = [layout.ScenePlan(0, 6, "center", shots=[layout.Shot(0, 6, 0.6)])]
+    assert layout.source_caption_spans(crop, [(x, [narrow]) for x in t], 0.316, 4.0) == []
+    inside = (0.47, 0.86, 0.73, 0.93)                                # kept whole inside the crop
+    assert layout.source_caption_spans(crop, [(x, [inside]) for x in t], 0.316, 4.0) == [(0.0, 6.0)]
+    gappy = [(x, [caption] if 1.0 <= x < 3.0 and x != 2.0 else []) for x in t]   # one missed sample
+    assert layout.source_caption_spans(whole, gappy, 0.316, 4.0) == [(0.875, 3.0)]
+    names = [(x, [(0.30 + 0.09 * k, 0.9, 0.36 + 0.09 * k, 0.95) for k in range(5)]) for x in t]
+    assert layout.source_caption_spans(whole, names, 0.316, 4.0) == []     # a roster's labels
+    labels = [(x, [(0.28, 0.93, 0.45, 0.96), (0.47, 0.93, 0.72, 0.96)]) for x in t]   # labels side by side
+    assert layout.source_caption_spans(whole, labels, 0.316, 4.0) == []
+    strip = [(x, [(0.28, 0.93, 0.72, 0.96)]) for x in t]            # the roster's name strip as one line
+    panel = {x: [(0.28, 0.76, 0.72, 1.0)] for x in t}                 # inside the still roster panel
+    assert layout.source_caption_spans(whole, strip, 0.316, 4.0, panel) == []
+    own = {x: [(0.1, 0.85, 0.9, 0.94)] for x in t}                    # a caption's own stillness box
+    assert layout.source_caption_spans(whole, ov, 0.316, 4.0, own) == [(0.875, 3.0)]
+
+
+def test_render_steps_aside_for_the_sources_own_captions(tmp_path):
+    src = tmp_path / "grey.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0x404040:size=1280x720:rate=25",
+                    "-f", "lavfi", "-i", "sine=frequency=300:sample_rate=44100", "-t", "6",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src)], check=True)
+    ws = words_from(" ".join(["word"] * 11), step=0.5)
+    ts = [i / 4 for i in range(24)]
+    caption = (0.1, 0.86, 0.9, 0.93)                                 # the source's own caption, 0-3 s
+
+    class Fixed:
+        name = "fixed"
+
+    import sys
+    comp = sys.modules["ezra.render.compose"]
+    orig = comp.sample_frames
+    comp.sample_frames = lambda *a, **k: comp.Sampled([(x, []) for x in ts], [],
+                                                      [(x, [caption] if x < 3.0 else []) for x in ts])
+    try:
+        spec = RenderSpec(caption_theme="clean", remove_silence=False, remove_fillers=False,
+                          hook_overlay=False, thumbnail=False)
+        res = compose(src, 0.0, 6.0, ws, [], spec, tmp_path / "out.mp4", lambda k: Path(k), detector=Fixed())
+    finally:
+        comp.sample_frames = orig
+    spans = res.edit_summary["source_captions"]
+    assert spans and spans[0][0] == 0.0 and 2.9 <= spans[0][1] <= 3.3, spans
+
+    def white(t: float) -> int:
+        png = tmp_path / f"w{t}.png"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(t), "-i", str(res.video), "-frames:v", "1",
+                        str(png)], check=True)
+        img = Image.open(png).convert("L").crop((0, 400, 1080, 1700))
+        return sum(img.histogram()[235:])
+
+    assert white(1.6) == 0 and white(4.6) > 200                      # ours hidden, then back
+    assert res.srt is not None and res.srt.read_text().count("word") == 11   # the sidecar keeps every word
+
+
+def test_a_caption_arriving_mid_shot_splits_the_plan():
+    t = [i / 4 for i in range(24)]
+    face = [(x, [Face(0.3, 0.4, 0.1, 0.15)]) for x in t]
+    caption = (0.1, 0.86, 0.9, 0.93)
+    ov = [(x, [caption] if x >= 4.0 else []) for x in t]
+    assert layout.graphic_changes(ov, 4.0, [], 6.0) == [3.875]
+    assert layout.graphic_changes(ov, 4.0, [3.6], 6.0) == []          # it came with a cut
+    blip = [(x, [caption] if 2.0 <= x < 2.5 else []) for x in t]      # two samples: noise
+    assert layout.graphic_changes(blip, 4.0, [], 6.0) == []
+    p = layout.plan(face, 6, [], "auto", "9:16", 4.0, overlays=ov, crop_frac=0.316)
+    assert [(q.mode, q.protected) for q in p] == [("track", None), ("blur", "shown whole")]
+    assert p[1].start == 3.875
+
+
+def test_a_caption_touching_scenery_is_still_a_line_of_type():
+    import numpy as np
+    from PIL import ImageDraw, ImageFont
+
+    from ezra.analysis.faces import detect_overlays
+
+    im = Image.new("L", (960, 540), 120)
+    d = ImageDraw.Draw(im)
+    for x0 in (300, 640):                                            # a door frame down to the caption
+        d.rectangle((x0, 0, x0 + 6, 540), fill=20)
+    try:
+        font = ImageFont.truetype(captions.find_font("bold") or "", 34)
+    except Exception:
+        font = ImageFont.load_default(34)
+    d.text((80, 488), "HEY GUYS! HE'S GOT 100K ON HIM RIGHT HERE", fill=255, font=font,
+           stroke_width=2, stroke_fill=0)
+    boxes = detect_overlays(np.asarray(im))
+    assert any(b[2] - b[0] >= 0.5 and b[1] >= 0.85 for b in boxes), boxes
+
+
+def test_texture_bands_are_not_lines_of_type():
+    import numpy as np
+
+    from ezra.analysis.faces import detect_overlays
+
+    rng = np.random.default_rng(2)
+    grass = rng.integers(0, 255, (540, 960), dtype=np.uint8)          # busy texture, one big blob
+    grass[300:330, 100:800] = np.where(rng.random((30, 700)) < 0.5, 255, 0)  # a stripy band inside it
+    assert not any(b[2] - b[0] >= 0.25 and 0.5 < b[1] < 0.65 for b in detect_overlays(grass))

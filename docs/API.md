@@ -53,7 +53,7 @@ Docker `api` service. The OpenAPI schema and a try-it UI are at `/docs` (`/opena
 | POST | `/api/candidates` | Custom candidate `{source_id, start, end, title?, hook?, reason?}` (snapped to words, scored) |
 | POST | `/api/candidates/{id}/scores` | Agent factor scores `{scores: {hook…campaign_fit}, notes, compliant}`; Ezra applies weights |
 | POST | `/api/candidates/rank` | Job: re-rank (`use_model` for the LLM critic) |
-| POST | `/api/candidates/{id}/render` | Job: render with an optional `spec` (aspect, layout, caption_theme, punch_in, protect_graphics, …) |
+| POST | `/api/candidates/{id}/render` | Job: render with an optional `spec` (aspect, layout, caption_theme, punch_in, protect_graphics, yield_to_source_captions, …) |
 | POST | `/api/render/top` | Job: render the N best publishable unrendered candidates |
 | GET | `/api/clips` | Clips (`campaign`, `status`) with current version + media links |
 | GET | `/api/clips/{id}` | Clip with all versions |

@@ -26,6 +26,7 @@ class RenderSpec(BaseModel):
     layout: str = "auto"
     crop_x: float | None = Field(None, ge=0, le=1, description="Pin the crop (0 left .. 1 right); overrides tracking")
     protect_graphics: bool = True     # keep burned-in text/graphics fully in or out of the crop
+    yield_to_source_captions: bool = True   # no Ezra captions while the source's own are on screen
     captions: bool = True
     caption_theme: str = "bold"
     caption_emoji: bool = False       # an emoji above captions with an illustratable word

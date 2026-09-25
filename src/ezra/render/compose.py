@@ -191,8 +191,11 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         crop_frac = min(1.0, (W / H) / (info["width"] / info["height"])) \
             if info["width"] and info["height"] else None
         plans = layout.plan(sampled.faces, duration, cuts, spec.layout, spec.aspect, LAYOUT_FPS, spec.crop_x,
-                            sampled.motion, sampled.overlays, crop_frac) \
+                            sampled.motion, sampled.graphics(), crop_frac) \
             if info["width"] else [layout.ScenePlan(0, duration, "blur")]
+        source_captions = layout.source_caption_spans(plans, sampled.overlays, crop_frac, LAYOUT_FPS,
+                                                      sampled.stable) \
+            if spec.yield_to_source_captions else []
         modes = {p.mode for p in plans}
 
         # 3. filter graph -----------------------------------------------------------------
@@ -307,10 +310,14 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
 
         # caption layer (streamed)
         renderer = None
-        if spec.captions and out_words:
+        # the source's own captions carry those lines; burned-in ones stay out of their way
+        # (the SRT/ASS sidecars keep every word)
+        burn_words = [w for w in out_words
+                      if not any(a <= (w.s + w.e) / 2 < b for a, b in source_captions)]
+        if spec.captions and burn_words:
             # split layouts put captions on the seam, where they cover nobody's face
             position = spec.caption_position or (0.5 if "split" in modes else None)
-            renderer = cap.CaptionRenderer(out_words, spec.caption_theme, W, H, safe, font=spec.caption_font,
+            renderer = cap.CaptionRenderer(burn_words, spec.caption_theme, W, H, safe, font=spec.caption_font,
                                            size=spec.caption_size, position=position,
                                            colors=spec.colors, keywords=spec.highlight_keywords,
                                            emoji=spec.caption_emoji)
@@ -385,7 +392,7 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
         ass.write_text(cap.to_ass(out_words, spec.caption_theme, W, H))
     real = probe(out)
     return RenderResult(out, real["duration"], W, H, layout.summary(plans),
-                        {**summary, "scenes": [_scene_summary(p) for p in plans],
+                        {**summary, "scenes": [_scene_summary(p) for p in plans], "source_captions": source_captions,
                          "punch_in": zoom_ranges, "broll": [b.model_dump() for b in spec.broll]},
                         srt, ass, thumb, out_words, time.time() - t0)
 

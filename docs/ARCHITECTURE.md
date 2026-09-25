@@ -133,16 +133,24 @@ version and confidence, and skipped on re-run unless `--force`:
      slides), panels of equals, landscape output and scenes whose graphics can't be kept whole.
    - **Graphics protection** (`protect_graphics`, on by default):
      - Burned-in graphics are found two ways:
-       - a morphological text detector (lines of type, rejecting straight edges);
+       - a morphological text detector: lines of type, rejecting straight edges; a line that
+         touches scenery is split back out of the blob when it holds most of the blob's ink;
        - per scene, detailed regions that hold still while the footage moves (roster panels,
          counters, logos).
      - A graphic counts only if it appears in half the scene's samples, and pieces on one row are
-       joined.
+       joined. Planning also splits a shot where a large graphic comes or goes (held ≥ 0.75 s),
+       so a caption that runs across a cut is judged in each part.
      - Each crop then slides (at most 60% of its half-width off its subject) so every graphic is
        fully in or fully out.
      - A large graphic (≥ 12% of the width) that no crop can keep whole sends the scene to
        `blur` (auto layout, vertical output).
      - Decisions are recorded per scene in the render record (`graphics`, `protected`).
+   - **Source captions** (`yield_to_source_captions`, on by default):
+     - What counts: a wide line of type (≥ 25% of the width) low in the frame, standing alone on
+       its row, not inside a larger still panel, held for 2+ samples.
+     - Where it applies: only while the output actually shows that caption.
+     - Effect: Ezra's burned-in captions are dropped for that span, which is recorded as
+       `source_captions`. The SRT/ASS sidecars keep every word.
    Faces, motion and graphics are sampled at 4 fps in one decode.
 3. **Overlays**: the caption band is streamed as raw RGBA frames into ffmpeg (Pillow-drawn, seven
    themes including `pop`, matched to top Shorts; word-level highlight; optional colour emoji
