@@ -431,18 +431,114 @@ class Sampled:
     overlays: Overlays                                                     # text lines per sample
     thumbs: list[tuple[float, np.ndarray]] = field(default_factory=list)   # small greys for stillness
     stable: dict[float, list[Box]] = field(default_factory=dict)          # still graphics per sample
+    read_at: set[float] | None = None          # samples the text detector actually ran on (None: all)
+    anchored: Overlays | None = None            # text lines judged burned in, per sample
 
     def add_stable_overlays(self, bounds: list[tuple[float, float]]) -> None:
-        """Per scene, find the graphics that hold still over moving footage."""
+        """Per scene, find the graphics that hold still over moving footage, and tell burned-in
+        text from text that is physically in the shot."""
         for a, b in bounds:
             boxes = stable_overlays([f for t, f in self.thumbs if a <= t < b])
             for t, _bs in self.overlays:
                 if boxes and a <= t < b:
                     self.stable[t] = boxes
+        self.anchored = anchor_text(self.overlays, self.thumbs, bounds, self.read_at)
 
     def graphics(self) -> Overlays:
-        """Every graphic per sample: text lines plus still panels."""
-        return [(t, bs + self.stable.get(t, [])) for t, bs in self.overlays]
+        """Every graphic per sample: burned-in text lines plus still panels."""
+        text = self.anchored if self.anchored is not None else self.overlays
+        return [(t, bs + self.stable.get(t, [])) for t, bs in text]
+
+
+ANCHOR_JITTER = 1.2    # px at 960 wide: a burned-in line holds its place to within detector noise
+RING_MOVING = 0.5      # share of the footage around a line that must change before jitter means anything
+TEXT_MATCH = 0.3       # IoU for "the same line" across samples
+CAPTION_BAND = 0.75    # a line centred below this height is in the caption / lower-third band
+
+
+def _iou(a: Box, b: Box) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix * iy
+    return ix * iy / union if union > 0 else 0.0
+
+
+def ring_moving(frames: list[np.ndarray], box: Box) -> float:
+    """Share of the footage just around a line of text that changes over the samples. People
+    walking past elsewhere in a locked-off shot don't count; a pan or a handheld camera does."""
+    if len(frames) < 3:
+        return 0.0
+    h, w = frames[0].shape
+    x0, y0, x1, y1 = int(box[0] * w), int(box[1] * h), int(np.ceil(box[2] * w)), int(np.ceil(box[3] * h))
+    my, mx = max(3, y1 - y0), max(3, int(0.03 * w))
+    X0, Y0, X1, Y1 = max(0, x0 - mx), max(0, y0 - my), min(w, x1 + mx), min(h, y1 + my)
+    stack = np.stack([f[Y0:Y1, X0:X1] for f in frames]).astype(np.int16)
+    spread = np.percentile(stack, 90, axis=0) - np.percentile(stack, 10, axis=0)
+    ring = np.ones(spread.shape, bool)
+    ring[y0 - Y0:y1 - Y0, x0 - X0:x1 - X0] = False
+    return float((spread[ring] > MOVING_RANGE).mean()) if ring.any() else 0.0
+
+
+def _corner(b: Box) -> bool:
+    """A logo or counter tucked into a corner of the frame."""
+    return (b[0] <= 0.1 or b[2] >= 0.9) and (b[1] <= 0.1 or b[3] >= 0.9)
+
+
+def anchor_text(overlays: Overlays, thumbs: list[tuple[float, np.ndarray]], bounds: list[tuple[float, float]],
+                read_at: set[float] | None = None) -> Overlays:
+    """Keep the text lines that are burned in; drop text that is part of the scene (signs,
+    stencils, a projected screen), which shouldn't steer the crop.
+    - A line in the caption / lower-third band is kept.
+    - Over moving footage, burned-in text holds its place while scene text drifts with the
+      picture, so the line's jitter decides.
+    - Over still footage both hold still: a line counts when it sits in a corner, or at the same
+      place in a neighbouring shot (a logo carried across cuts)."""
+    thumb_at = dict(thumbs)
+    scenes: list[list[list[tuple[float, Box]]]] = []
+    for a, b in bounds:
+        clusters: list[list[tuple[float, Box]]] = []
+        for t, bs in overlays:
+            if not a <= t < b or (read_at is not None and t not in read_at):
+                continue                # copies of the previous sample would fake steadiness
+            for box in bs:
+                for c in clusters:
+                    if _iou(c[0][1], box) > TEXT_MATCH:
+                        c.append((t, box))
+                        break
+                else:
+                    clusters.append([(t, box)])
+        scenes.append(clusters)
+
+    def centre(c: list[tuple[float, Box]]) -> Box:
+        return tuple(float(np.median([bx[i] for _t, bx in c])) for i in range(4))  # type: ignore[return-value]
+
+    keep: list[list[Box]] = []
+    for k, clusters in enumerate(scenes):
+        # a line carried across a cut, seen more than once there (one sighting can be the same
+        # shot's last frame landing just past an imprecise cut)
+        near = [centre(c) for j in (k - 1, k + 1) if 0 <= j < len(scenes) for c in scenes[j] if len(c) >= 2]
+        kept: list[Box] = []
+        for c in clusters:
+            box = centre(c)
+            frames = [thumb_at[t] for t, _bx in c if t in thumb_at]
+            if (box[1] + box[3]) / 2 >= CAPTION_BAND:
+                burned = True
+            elif len(c) >= 3 and ring_moving(frames, box) >= RING_MOVING:
+                h = frames[0].shape[0] / frames[0].shape[1] * SAMPLE_WIDTH
+                cx = [(bx[0] + bx[2]) / 2 * SAMPLE_WIDTH for _t, bx in c]
+                cy = [(bx[1] + bx[3]) / 2 * h for _t, bx in c]
+                burned = max(float(np.std(cx)), float(np.std(cy))) <= ANCHOR_JITTER
+            else:
+                burned = _corner(box) or (len(c) >= 2 and any(_iou(box, o) > 0.5 for o in near))
+            if burned:
+                kept += [bx for _t, bx in c]
+        keep.append(kept)
+    out: Overlays = []
+    for t, bs in overlays:
+        idx = next((i for i, (a, b) in enumerate(bounds) if a <= t < b), None)
+        mine = keep[idx] if idx is not None else []
+        out.append((t, [bx for bx in bs if any(_iou(bx, m) > TEXT_MATCH for m in mine)]))
+    return out
 
 
 def sample_faces_and_motion(media: Path, start: float, end: float, fps: float = 2.0,
@@ -473,6 +569,7 @@ def sample_frames(media: Path, start: float, end: float, fps: float = 2.0,
     motion: Motion = []
     texts: Overlays = []
     thumbs: list[tuple[float, np.ndarray]] = []
+    read_at: set[float] = set()
     prev_small: np.ndarray | None = None
     prev_faces: list[tuple[Face, tuple[np.ndarray, np.ndarray] | None]] = []
     total = max(1, int((end - start) * fps))
@@ -502,6 +599,7 @@ def sample_frames(media: Path, start: float, end: float, fps: float = 2.0,
                 texts.append((i / fps, detect_overlays(gray)))
             elif i % TEXT_EVERY == 0 or not texts:
                 texts.append((i / fps, reader.detect(gray, rgb)))
+                read_at.add(i / fps)
             else:                                   # the network is slower; graphics hold still
                 texts.append((i / fps, list(texts[-1][1])))
             thumbs.append((i / fps, gray[::3, ::3].copy()))
@@ -509,4 +607,4 @@ def sample_frames(media: Path, start: float, end: float, fps: float = 2.0,
         if progress and i % 20 == 0:
             progress(min(i / total, 1.0))
     proc.wait()
-    return Sampled(out, motion, texts, thumbs)
+    return Sampled(out, motion, texts, thumbs, read_at=read_at if reader is not None else None)

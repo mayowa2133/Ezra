@@ -140,6 +140,14 @@ version and confidence, and skipped on re-run unless `--force`:
          touches scenery is split back out of the blob when it holds most of the blob's ink;
        - per scene, detailed regions that hold still while the footage moves (roster panels,
          counters, logos).
+     - Text that is part of the scene (signs, stencils, a projected screen) doesn't steer the crop
+       (`faces.anchor_text`):
+       - a line in the caption / lower-third band counts as burned in;
+       - over moving footage, a line counts when it holds its place (≤ 1.2 px of jitter) while
+         the footage around it moves; scene text drifts with the picture;
+       - over still footage, a line counts when it sits in a corner, or at the same place in a
+         neighbouring shot.
+       Source-caption detection still sees every line.
      - A graphic counts only if it appears in half the scene's samples, and pieces on one row are
        joined. Planning also splits a shot where a large graphic comes or goes (held ≥ 0.75 s),
        so a caption that runs across a cut is judged in each part.

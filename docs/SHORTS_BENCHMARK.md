@@ -152,8 +152,8 @@ A 9:16 crop of a 16:9 frame keeps only 32% of the width, so it sliced through th
 | 12 | shown whole (6.2 s, 3 scenes) | The prisoner roster, on screen while the cops search |
 | 9 | shown whole (3.3 s) | The roster while its highlights animate; caught once PP-OCRv3 was added (iteration 13) |
 | 10 | crop moved | Text kept whole with the speaker still framed |
-| 7, 11 | crop moved (small) | Text physically in the scene (a projected chat, container stencils); detectors can't tell it from graphics, and the shift is capped so the speaker stays framed |
-| 13 | unchanged | Graphics (channel logo, corner counters) already outside the crop |
+| 7, 11 | unchanged (iteration 14) | Text physically in the scene (a projected chat, container stencils): it drifts with the camera or sits outside graphic spots, so it no longer moves the crop |
+| 11, 13 | crop moved / unchanged | Channel logo and a "POLICE HQ" location tag, both burned in |
 
 - **False positives:** the ones found were fixed before these numbers were taken:
   - a pipe edge;
@@ -171,6 +171,11 @@ A 9:16 crop of a 16:9 frame keeps only 32% of the width, so it sliced through th
     28 s to 22 s. At full size the blur ran on every frame of any clip with a whole-frame scene.
 - **Double captions:** while the source's own caption is on screen, Ezra's burned-in captions
   step aside. The SRT sidecar keeps every word.
+- **Scene text:** measured on the 8 clips, burned-in lines hold their place to ≤ 1.1 px while
+  the camera moves; scene text drifts 2.3–7.4 px. The footage around each line decides whether
+  that test applies. Whole-camera motion estimates were fooled by people walking past a
+  locked-off camera. Every roster, logo, caption and location tag is kept; every projected chat
+  line, stencil and false detection on clothing is dropped.
 - **Caption detection:** real captions separated cleanly from look-alikes on these clips. A
   caption grazing a door frame keeps 85–98% of its blob's ink in its line; texture and panel rows
   keep 30% or less. A caption must also stand alone on its row, which rules out a roster's name
@@ -194,9 +199,8 @@ the format), the gap comes from the source, not the editing.
 
 ## Remaining work
 
-- **Scene text vs. graphics:** text physically in the shot (signs, stencils, a projected screen)
-  nudges the crop like a graphic does. Telling them apart would need, for example, checking
-  whether the text moves with the camera.
+- **Faces on screens:** in clip 7 the crop follows a face in a projected video rather than the
+  people in the dark room. The face tracker doesn't know a face on a screen from a person.
 - **A "premise prefix"** for clips whose moment needs context: a 2–3 s line from the video's cold open
   stitched in front, the spoken equivalent of the title card.
 - **Collect third-party clips** of long-form videos (the like-for-like reference) through an allowed

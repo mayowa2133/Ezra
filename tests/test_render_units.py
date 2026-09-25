@@ -521,3 +521,40 @@ def test_text_network_finds_small_labels_and_whole_caption_lines(monkeypatch):
     from ezra.config import reset_settings
     reset_settings()
     assert faces.get_text_detector() is None                          # offline fallback on request
+
+
+def _panning(n: int, step: int, seed: int = 3):
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    world = rng.integers(0, 255, (180, 320 + step * n), dtype=np.uint8)
+    return [world[:, i * step:i * step + 320].copy() for i in range(n)]
+
+
+def test_burned_in_text_is_told_from_text_in_the_scene():
+    from ezra.analysis.faces import anchor_text
+
+    frames = _panning(8, 6)                                           # a camera panning 18 px a sample
+    ts = [i / 4 for i in range(8)]
+    thumbs = list(zip(ts, frames))
+    title = (0.40, 0.30, 0.60, 0.36)                                  # pasted on: holds its place
+    sign = [(0.40 - 0.019 * i, 0.50, 0.55 - 0.019 * i, 0.56) for i in range(8)]   # drifts with the pan
+    ov = [(t, [title, sign[i]]) for i, t in enumerate(ts)]
+    kept = anchor_text(ov, thumbs, [(0.0, 2.0)])
+    assert all(bs == [title] for _t, bs in kept)
+
+    still = [frames[0]] * 8                                           # a locked-off shot: nothing moves
+    stencil = (0.74, 0.11, 0.86, 0.18)                                 # scenery near, not in, a corner
+    logo = (0.03, 0.04, 0.18, 0.10)
+    caption = (0.10, 0.88, 0.90, 0.95)
+    ov = [(t, [stencil, logo, caption]) for t in ts]
+    kept = anchor_text(ov, list(zip(ts, still)), [(0.0, 2.0)])
+    assert all(bs == [logo, caption] for _t, bs in kept)
+
+    carried = (0.40, 0.40, 0.60, 0.46)                                 # mid-frame, but across a cut
+    ov = [(t, [carried]) for t in ts]
+    kept = anchor_text(ov, list(zip(ts, still)), [(0.0, 1.0), (1.0, 2.0)])
+    assert all(bs == [carried] for _t, bs in kept)
+    once = [(t, [carried] if t in (0.25, 0.5, 1.0) else []) for t in ts]   # one sighting past the cut
+    kept = anchor_text(once, list(zip(ts, still)), [(0.0, 1.0), (1.0, 2.0)])
+    assert all(bs == [] for _t, bs in kept)
