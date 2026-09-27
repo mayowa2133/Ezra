@@ -274,12 +274,26 @@ def export_clip(clip_id: int, dest: Path) -> dict[str, Any]:
     meta = clip_dict(clip) | {"version": version_dict(v)}
     (dest / f"{slug}.json").write_text(json.dumps(meta, indent=2, default=str))
     files["json"] = str(dest / f"{slug}.json")
+    if clip.platform_metadata:              # copy ready to paste when posting by hand
+        (dest / "post.txt").write_text(post_text(clip.platform_metadata))
+        files["txt"] = str(dest / "post.txt")
     with db.session() as s:
         c = s.get(Clip, clip_id)
         if c and c.status == "approved":
             c.status = "exported"
     audit.record("clip.exported", "clip", clip_id, dest=str(dest))
     return files
+
+
+def post_text(platform_metadata: dict[str, Any]) -> str:
+    blocks = []
+    for platform, m in platform_metadata.items():
+        lines = [f"== {platform.upper()} =="]
+        if m.get("title"):
+            lines.append(f"Title: {m['title']}")
+        lines.append(m.get("description") if platform == "youtube" and m.get("description") else m.get("caption", ""))
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) + "\n"
 
 
 def version_dict(v: ClipVersion) -> dict[str, Any]:

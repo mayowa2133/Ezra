@@ -107,6 +107,8 @@ def test_pipeline_on_real_footage(use_processed):
     assert perf.insights(None)["n_posts"] == 2
     files = render.export_clip(clip.id, Path(os.environ["EZRA_HOME"]) / "exports")
     assert Path(files["mp4"]).exists() and Path(files["srt"]).exists()
+    post = Path(files["txt"]).read_text()                           # copy ready to paste by hand
+    assert "== TIKTOK ==" in post and "#founderstories" in post and "Title:" in post
 
 
 def test_platform_variant_and_rerender(use_processed):
