@@ -56,6 +56,8 @@ class CampaignSpec(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     mentions: list[str] = Field(default_factory=list)
     cta: str | None = None
+    creator: str | None = Field(None, description="Whose footage it is; credited in post copy, e.g. 'MrBeast'")
+    suggested_hashtags: list[str] = Field(default_factory=list, description="Optional topic hashtags")
     subtitles_required: bool = True
     logo_required: bool = False
     allowed_speakers: list[str] = Field(default_factory=list)
@@ -72,7 +74,7 @@ class CampaignSpec(BaseModel):
     brand_kit: str | None = None
     source: list[str] = Field(default_factory=list, description="Source files to ingest on import")
 
-    @field_validator("hashtags")
+    @field_validator("hashtags", "suggested_hashtags")
     @classmethod
     def _hashtags(cls, v: list[str]) -> list[str]:
         return [t if t.startswith("#") else f"#{t}" for t in (x.strip() for x in v) if t]
@@ -123,7 +125,7 @@ _NESTED = {("rate", "cpm"): "cpm", ("requirements", "min_duration"): "min_durati
 _ALIASES = {"minimum_qualified_views": "minimum_views", "min_views": "minimum_views",
             "max_payout": "maximum_payout", "maximum_payout_per_clip": "maximum_payout",
             "required_hashtags": "hashtags", "required_mentions": "mentions", "required_cta": "cta",
-            "allowed_platforms": "platforms", "slug": "id", "sources": "source"}
+            "allowed_platforms": "platforms", "slug": "id", "sources": "source", "credit": "creator"}
 
 
 def _flatten(data: dict[str, Any]) -> dict[str, Any]:
@@ -293,6 +295,8 @@ def upsert(spec: CampaignSpec, raw: str | None = None) -> Campaign:
         c.required_hashtags = spec.hashtags
         c.required_mentions = spec.mentions
         c.required_cta = spec.cta
+        c.creator = spec.creator
+        c.suggested_hashtags = spec.suggested_hashtags
         c.subtitles_required = spec.subtitles_required
         c.logo_required = spec.logo_required
         c.allowed_speakers = spec.allowed_speakers
@@ -389,6 +393,7 @@ def to_dict(c: Campaign) -> dict[str, Any]:
         "ends_at": c.ends_at.isoformat() if c.ends_at else None,
         "platforms": c.allowed_platforms, "min_duration": c.min_duration, "max_duration": c.max_duration,
         "hashtags": c.required_hashtags, "mentions": c.required_mentions, "cta": c.required_cta,
+        "creator": c.creator, "suggested_hashtags": c.suggested_hashtags or [],
         "subtitles_required": c.subtitles_required, "logo_required": c.logo_required,
         "allowed_speakers": c.allowed_speakers, "forbidden_words": c.forbidden_words,
         "forbidden_topics": c.forbidden_topics, "competitors": c.competitors, "geography": c.geography,

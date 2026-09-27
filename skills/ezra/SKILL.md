@@ -27,7 +27,9 @@ same services; prefer the MCP tools inside an agent session. Long operations ret
 6. `ezra_review_queue`: show the user each clip — title, rank, duration, compliance status and
    reasons, expected value with its p10–p90 range and basis — and ASK which to approve.
    `ezra_approve_clip` / `ezra_reject_clip` only for the clips the user chose.
-7. `ezra_generate_metadata`, then `ezra_publish_clip` (dry run). Show exactly what will post; call it
+7. `ezra_generate_metadata`: the template gives a headline, a question, the creator credit and a few
+   tags; for better copy write it yourself and pass `copy` (one or two lines that add curiosity, the
+   searchable subject, 3-5 hashtags, every claim true to the clip). Then `ezra_publish_clip` (dry run). Show exactly what will post; call it
    again with `confirm=true` only after the user says yes. `ezra_schedule_clip` for later posting.
 
 ## Learn from results

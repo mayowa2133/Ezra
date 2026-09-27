@@ -25,6 +25,12 @@ def test_json_and_csv_import():
     assert rows[0].allowed_platforms == ["tiktok", "youtube"] and rows[0].competitors == ["Foo"]
 
 
+def test_creator_and_suggested_hashtags_import():
+    (c,) = campaigns.import_text('{"name": "Credit Camp", "credit": "MrBeast", "suggested_hashtags": ["challenge"]}')
+    assert c.creator == "MrBeast" and c.suggested_hashtags == ["#challenge"]
+    assert campaigns.to_dict(c)["creator"] == "MrBeast"
+
+
 def test_invalid_campaigns_are_rejected():
     with pytest.raises(ValueError):
         campaigns.parse('{"name": "x", "platforms": ["myspace"]}')

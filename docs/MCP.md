@@ -62,7 +62,7 @@ database.
 | `ezra_approve_clip` | `clip_id`, `notes?` | Clip (**human decision only**) |
 | `ezra_reject_clip` | `clip_id`, `reason?` | Clip |
 | `ezra_update_clip` | `clip_id`, `title?`, `description?`, `hashtags?`, `platform_metadata?`, `rerender?` | Clip (or a re-render job) |
-| `ezra_generate_metadata` | `clip_id`, `platforms?` | Per-platform copy + publish-stage compliance |
+| `ezra_generate_metadata` | `clip_id`, `platforms?`, `copy?` | Per-platform copy + publish-stage compliance; `copy` is your own caption/title per platform (required tags, mentions, CTA and creator credit still enforced) |
 | `ezra_export_clip` | `clip_id` | Paths of mp4, thumbnail, SRT, ASS, JSON |
 | `ezra_publish_clip` | `clip_id`, `platforms?`, `visibility?`, `confirm?` | Dry run (problems + plan) or queued posts |
 | `ezra_schedule_clip` | `clip_id`, `schedule_at` (ISO), `timezone?`, `platforms?`, `visibility?`, `confirm?` | Same, scheduled |

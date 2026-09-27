@@ -86,6 +86,9 @@ def test_pipeline_on_real_footage(use_processed):
     review.approve(clip.id, actor="test")
     meta = metadata.generate(clip.id, ["tiktok", "youtube"], use_model=False)
     assert "#founderstories" in meta["metadata"]["tiktok"]["caption"]
+    written = metadata.generate(clip.id, ["tiktok"], save=False,
+                                copy={"tiktok": {"caption": "Would you back this founder?", "hashtags": ["#startups"]}})
+    assert written["source"] == "agent" and "#founderstories" in written["metadata"]["tiktok"]["caption"]
     for p in ("tiktok", "youtube"):
         publishing.add_account(p, "local-export", f"demo-{p}")
     dry = publishing.publish_clip(clip.id, ["tiktok", "youtube"])

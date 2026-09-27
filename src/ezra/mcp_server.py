@@ -231,9 +231,12 @@ def ezra_update_clip(clip_id: int, title: str | None = None, description: str | 
 
 
 @server.tool()
-def ezra_generate_metadata(clip_id: int, platforms: list[str] | None = None) -> dict[str, Any]:
-    """Per-platform title/caption/hashtags (required hashtags/mentions/CTA enforced) + compliance."""
-    return metadata.generate(clip_id, platforms)
+def ezra_generate_metadata(clip_id: int, platforms: list[str] | None = None,
+                           copy: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Per-platform title/caption/hashtags + compliance. Pass `copy` ({platform: {caption, hashtags,
+    title?, description?}}) to use your own words; required hashtags/mentions/CTA and the creator
+    credit are enforced either way."""
+    return metadata.generate(clip_id, platforms, copy=copy)
 
 
 @server.tool()

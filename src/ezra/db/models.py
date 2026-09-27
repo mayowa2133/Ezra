@@ -70,6 +70,8 @@ class Campaign(Timestamped, Base):
     required_hashtags: Mapped[list[Any]] = mapped_column(JSON, default=list)
     required_mentions: Mapped[list[Any]] = mapped_column(JSON, default=list)
     required_cta: Mapped[str | None] = mapped_column(Text)
+    creator: Mapped[str | None] = mapped_column(String(120))                  # credited in post copy
+    suggested_hashtags: Mapped[list[Any]] = mapped_column(JSON, default=list)  # optional, beyond the required
     subtitles_required: Mapped[bool] = mapped_column(Boolean, default=True)
     logo_required: Mapped[bool] = mapped_column(Boolean, default=False)
     allowed_speakers: Mapped[list[Any]] = mapped_column(JSON, default=list)

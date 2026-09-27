@@ -47,6 +47,8 @@ campaign:
   hashtags: ["#founderstories"]   # required in every caption ("#" added if missing)
   mentions: ["@example"]          # required mentions ("@" added if missing)
   cta: "Follow for part 2"        # required call to action
+  creator: "Jane Doe"             # whose footage it is: credited in post copy ("🎥 Jane Doe") and tagged
+  suggested_hashtags: ["#startups"]  # optional topic tags, used before ones taken from the clip
   subtitles_required: true
   logo_required: false
   allowed_speakers: []            # if set, clips may only feature these speakers
@@ -73,7 +75,7 @@ Accepted aliases:
   `requirements: {min_duration, max_duration}`;
 - `minimum_qualified_views` / `min_views`, `max_payout` / `maximum_payout_per_clip`;
 - `required_hashtags` / `required_mentions` / `required_cta`, `allowed_platforms`, `slug`,
-  `sources`;
+  `sources`, `credit` (for `creator`);
 - a `required:` free-text list (subtitle/logo items set the flags, the rest become rules).
 
 JSON takes the same keys. **CSV** has one campaign per row, with the same column names; list columns
