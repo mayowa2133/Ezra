@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Job } from "./types";
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public code?: string) {
     super(message);
   }
 }
@@ -19,7 +19,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
     const detail = data?.detail;
-    throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail ?? res.statusText));
+    const message = typeof detail === "string" ? detail : JSON.stringify(detail ?? res.statusText);
+    throw new ApiError(res.status, data?.error_code ? `${message} [${data.error_code}]` : message, data?.error_code);
   }
   return data as T;
 }

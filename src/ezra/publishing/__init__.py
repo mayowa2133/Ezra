@@ -622,10 +622,23 @@ def test_private_upload(account_id: int, confirm: bool = False, delete_after: bo
     return out
 
 
-def disconnect_account(account_id: int, revoke: bool = True, actor: str = "user") -> dict[str, Any]:
+def disconnect_account(account_id: int, revoke: bool = True, purge_data: bool = False,
+                       actor: str = "user") -> dict[str, Any]:
     """Revoke the platform token (when supported), delete it from the secret store and mark the
-    account disconnected. Posts and metrics stay."""
+    account disconnected. With purge_data, also delete what Ezra stored from the platform's API for
+    this account: metric snapshots and raw API responses (post records keep only Ezra's own data)."""
     acc = _get_account(account_id)
+    purged = 0
+    if purge_data:
+        from ..db.models import MetricSnapshot
+
+        with db.session() as s:
+            post_ids = list(s.scalars(select(Post.id).where(Post.account_id == account_id)))
+            if post_ids:
+                purged = s.query(MetricSnapshot).filter(MetricSnapshot.post_id.in_(post_ids)).delete(
+                    synchronize_session=False)
+                for p in s.scalars(select(Post).where(Post.id.in_(post_ids))):
+                    p.raw_response, p.upload_state = {}, {}
     revoked = False
     if acc.credential_ref:
         tok = secrets.get(acc.credential_ref)
@@ -644,8 +657,10 @@ def disconnect_account(account_id: int, revoke: bool = True, actor: str = "user"
             IntegrationCredentialMetadata.account_label == acc.handle))
         if cred is not None:
             cred.status = "revoked"
-    audit.record("account.disconnected", "publish_account", account_id, actor=actor, revoked=revoked)
-    return {"account_id": account_id, "status": "disconnected", "token_revoked": revoked}
+    audit.record("account.disconnected", "publish_account", account_id, actor=actor, revoked=revoked,
+                 purged_snapshots=purged)
+    return {"account_id": account_id, "status": "disconnected", "token_revoked": revoked,
+            "purged_snapshots": purged if purge_data else None}
 
 
 def retry_post(post_id: int, actor: str = "user") -> dict[str, Any]:

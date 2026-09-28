@@ -5,15 +5,17 @@ import { useState } from "react";
 import { ErrorNote } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 
+import { YouTubePanel } from "./YouTubePanel";
+
 type Integrations = {
   publishers: { provider: string; platforms: string[]; oauth: boolean; configured: boolean; env_var: string | null }[];
   secrets_present: string[];
-  accounts: { id: number; platform: string; provider: string; handle: string; has_credential: boolean }[];
+  accounts: { id: number; platform: string; provider: string; handle: string; has_credential: boolean; status: string }[];
   llm: string; transcriber: string; diarizer: string; face_detector: string;
 };
 
 export default function IntegrationsPage() {
-  const { data, error } = useApi<Integrations>("/integrations");
+  const { data, error, reload } = useApi<Integrations>("/integrations");
   const [err, setErr] = useState<string | null>(null);
 
   async function connect(provider: string) {
@@ -32,6 +34,8 @@ export default function IntegrationsPage() {
       <ErrorNote error={error ?? err} />
       {data && (
         <>
+          <YouTubePanel accounts={data.accounts} onChange={() => void reload()}
+            configured={data.publishers.find((p) => p.provider === "youtube")?.configured ?? false} />
           <div className="panel">
             <h2 style={{ marginTop: 0 }}>Publishing</h2>
             <table>
@@ -49,7 +53,8 @@ export default function IntegrationsPage() {
             <h2 style={{ marginTop: 0 }}>Connected accounts</h2>
             <table><tbody>{data.accounts.map((a) => (
               <tr key={a.id}><td>{a.platform}</td><td>@{a.handle}</td><td className="muted">{a.provider}</td>
-                <td>{a.has_credential || a.provider === "local-export" ? "ready" : "needs credential"}</td></tr>
+                <td>{a.status === "reconnect_required" ? "needs reconnecting" : a.status === "disconnected" ? "disconnected"
+                  : a.has_credential || a.provider === "local-export" ? "ready" : "needs credential"}</td></tr>
             ))}</tbody></table>
           </div>
           <div className="panel small">

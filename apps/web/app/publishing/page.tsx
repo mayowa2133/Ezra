@@ -76,7 +76,12 @@ export default function Publishing() {
           <tbody>{posts?.map((p) => (
             <tr key={p.id}>
               <td>{p.id}</td><td>{p.clip_id}</td><td>{p.platform}</td><td className="muted">{p.provider}</td>
-              <td><Badge value={p.status} />{p.error && <div className="small error">{p.error}</div>}</td>
+              <td><Badge value={p.status} />
+                {p.platform_state && p.platform_state !== p.status && <span className="muted small"> · {p.platform_state}</span>}
+                {p.status === "publishing" && p.upload_progress != null && p.upload_progress < 1 &&
+                  <span className="muted small"> · {Math.round(p.upload_progress * 100)}% uploaded</span>}
+                {p.error && <div className="small error">{p.error_code ? <b>{p.error_code}: </b> : null}{p.error}</div>}
+                {p.warnings?.map((w) => <div key={w.code} className="small muted">⚠ {w.message}</div>)}</td>
               <td>{p.visibility}</td><td className="small">{p.scheduled_at ?? "–"}</td><td>{num(p.metrics?.views)}</td>
               <td>{p.url && <a href={p.url} target="_blank" rel="noreferrer">open</a>}</td>
               <td>{p.status === "scheduled" && <button onClick={async () => { await post(`/posts/${p.id}/cancel`); await reload(); }}>Cancel</button>}

@@ -176,8 +176,12 @@ def test_cancel_reschedule_update_delete_and_disconnect(fake, monkeypatch):
     assert publishing.delete_post(pid)["dry_run"] and "vid1" in fake.videos
     publishing.delete_post(pid, confirm=True)
     assert "vid1" not in fake.videos and publishing.get_post(pid).status == "deleted"
-    out = publishing.disconnect_account(acc.id)
+    from ezra import metrics as mx
+
+    mx.record(pid, provider="youtube-api", views=10)
+    out = publishing.disconnect_account(acc.id, purge_data=True)
     assert out["token_revoked"] and fake.revoke_calls == 1 and secrets.get(acc.credential_ref) is None
+    assert out["purged_snapshots"] == 1 and not mx.history(pid) and not publishing.get_post(pid).raw_response
     assert publishing.account_health(acc.id)["status"] == "disconnected"
 
 
@@ -256,3 +260,25 @@ def test_test_upload_sends_a_private_pattern_and_can_clean_up(fake, monkeypatch)
     out = publishing.test_private_upload(acc.id, confirm=True, delete_after=True)
     assert out["verified_on_youtube"] and out["privacy"] == "private" and out["deleted"]
     assert fake.init_bodies[0]["status"]["privacyStatus"] == "private" and not fake.videos
+
+
+def test_the_live_test_script_flow_works_against_the_fake(fake, monkeypatch, capsys):
+    """The script that runs against real YouTube, exercised end to end on the fake first."""
+    import importlib.util
+    import json
+    from pathlib import Path
+
+    monkeypatch.setenv("EZRA_LIVE_YOUTUBE_TEST", "1")
+    monkeypatch.setenv("EZRA_LIVE_YOUTUBE_DELETE", "1")
+    monkeypatch.setenv("EZRA_YOUTUBE_MANAGE", "1")
+    reset_settings()
+    fake.scope += " https://www.googleapis.com/auth/youtube.force-ssl"
+    connect(fake)
+    spec = importlib.util.spec_from_file_location("live", Path(__file__).parent.parent / "scripts" /
+                                                  "youtube_live_test.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.main() == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["passed"] and report["steps"]["delete"]["ok"] and not fake.videos
+    assert fake.init_bodies[0]["status"]["privacyStatus"] == "private"

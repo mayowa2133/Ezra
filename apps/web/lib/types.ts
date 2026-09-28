@@ -158,6 +158,10 @@ export type Post = {
   scheduled_at: string | null;
   published_at: string | null;
   error: string | null;
+  error_code?: string | null;
+  platform_state?: string | null;
+  warnings?: { code: string; message: string }[];
+  upload_progress?: number | null;
   metrics?: { views: number | null; likes: number | null; comments: number | null; provider: string } | null;
 };
 

@@ -775,8 +775,8 @@ def account_health(account_id: int, live: bool = False) -> dict[str, Any]:
 
 
 @app.post("/api/accounts/{account_id}/disconnect", dependencies=[Auth])
-def disconnect(account_id: int) -> dict[str, Any]:
-    return publishing.disconnect_account(account_id, actor="api")
+def disconnect(account_id: int, purge: bool = False) -> dict[str, Any]:
+    return publishing.disconnect_account(account_id, purge_data=purge, actor="api")
 
 
 class TestUploadBody(BaseModel):

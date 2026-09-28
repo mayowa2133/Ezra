@@ -558,13 +558,15 @@ def accounts_health(account_id: int, live: bool = typer.Option(False, help="Also
 
 
 @accounts_app.command("disconnect")
-def accounts_disconnect(account_id: int, yes: bool = False) -> None:
+def accounts_disconnect(account_id: int, yes: bool = False,
+                        purge: bool = typer.Option(False, help="Also delete the metrics and raw API data "
+                                                                "stored from this account")) -> None:
     """Revoke the platform token, delete it from the secret store and mark the account disconnected."""
     a = publishing.account_health(account_id)
     if not yes and console.input(f"Disconnect {a['handle']} ({a['provider']}) and revoke its token? [y/N] "
                                  ).strip().lower() not in ("y", "yes"):
         return
-    console.print_json(data=publishing.disconnect_account(account_id, actor="cli"))
+    console.print_json(data=publishing.disconnect_account(account_id, purge_data=purge, actor="cli"))
 
 
 @post_app.command("show")
