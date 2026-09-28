@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     # --- external services (credentials live in env / secret store) -------
     openshorts_url: str = "http://localhost:8001"
 
+    # --- YouTube ------------------------------------------------------------
+    youtube_public_allowed: bool = Field(False, description="The Google API project passed YouTube's audit, "
+                                         "so public and scheduled uploads are allowed; until then private only")
+    youtube_manage: bool = Field(False, description="Also request youtube.force-ssl at connect time, "
+                                 "needed to edit, reschedule or delete uploaded videos")
+    youtube_chunk_mb: int = Field(8, description="Resumable upload chunk size in MiB (rounded to 256 KiB)")
+    youtube_category_id: str = Field("22", description="YouTube category for uploads (22 = People & Blogs)")
+    youtube_loopback_port: int = Field(8765, description="Port for the CLI's local OAuth callback")
+
     # --- worker -------------------------------------------------------------
     worker_poll_seconds: float = 1.0
     job_max_attempts: int = 3

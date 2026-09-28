@@ -55,7 +55,11 @@ def test_pkce_pair_is_s256():
     assert base64.urlsafe_b64encode(hashlib.sha256(v.encode()).digest()).rstrip(b"=").decode() == c
 
 
-def test_youtube_oauth_upload_schedule_and_metrics(video):
+def test_youtube_oauth_upload_schedule_and_metrics(video, monkeypatch):
+    from ezra.config import reset_settings
+
+    monkeypatch.setenv("EZRA_YOUTUBE_PUBLIC_ALLOWED", "1")      # scheduling needs an audited project
+    reset_settings()
     secrets.put("youtube-client", {"client_id": "cid", "client_secret": "csec"})
     uploaded = {}
 
@@ -203,8 +207,8 @@ def test_rate_limits_are_retryable(video):
 def test_missing_credentials_are_explicit(video):
     yt = providers.YouTubePublisher(httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500))))
     with pytest.raises(PublishError, match="no stored credential"):
-        yt.publish({"handle": "x", "credential_ref": None}, req(video), "youtube")
-    with pytest.raises(secrets.SecretError, match="YOUTUBE_CLIENT_SECRET_JSON"):
+        yt.publish({"handle": "x", "credential_ref": None}, req(video, visibility="private"), "youtube")
+    with pytest.raises(PublishError, match="YOUTUBE_CLIENT_SECRET_JSON"):
         yt.authorize_url("s", "r", "c")
 
 

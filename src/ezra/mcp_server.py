@@ -48,6 +48,9 @@ then learns from results. Workflow:
  5. Show the human the clips (title, rank, duration, compliance, expected value) and ASK which to
     approve. ezra_approve_clip / ezra_reject_clip only with the human's explicit choice.
  6. ezra_generate_metadata, then ezra_publish_clip (dry run) → confirm=true only after the human says yes.
+    YouTube: uploads are private-only until the Google project passes YouTube's audit; check
+    ezra_list_accounts (mode, can_manage). Scheduling uploads now with publishAt; follow a post with
+    ezra_get_post (platform_state, error_code, warnings). Deleting needs the human's explicit request.
  7. ezra_sync_metrics, ezra_campaign_report / ezra_earnings_report, ezra_optimize_campaign.
 Scores are ranking estimates, never guarantees of views."""
 
@@ -263,6 +266,75 @@ def ezra_schedule_clip(clip_id: int, schedule_at: str, timezone: str = "UTC", pl
     """Schedule a post (ISO datetime in `timezone`); dry run unless confirm=true."""
     return publishing.publish_clip(clip_id, platforms, visibility=visibility, schedule_at=schedule_at, tz=timezone,
                                    confirm=confirm, actor="mcp")
+
+
+@server.tool()
+def ezra_list_accounts(platform: str | None = None) -> list[dict[str, Any]]:
+    """Connected publishing accounts with token/permission health (never token values). For YouTube:
+    can_upload, can_read_analytics, can_manage (edit/delete) and mode (private only / public allowed)."""
+    return [publishing.account_health(a.id) for a in publishing.list_accounts(platform)]
+
+
+@server.tool()
+def ezra_account_health(account_id: int, live: bool = False) -> dict[str, Any]:
+    """One account's health; live=true also calls the platform (e.g. YouTube channel lookup)."""
+    return publishing.account_health(account_id, check_live=live)
+
+
+@server.tool()
+def ezra_youtube_test_upload(account_id: int, confirm: bool = False, delete_after: bool = False) -> dict[str, Any]:
+    """Upload a 5 s generated test pattern as a PRIVATE YouTube video to prove the connection.
+    Dry run unless confirm=true; ask the human first."""
+    return publishing.test_private_upload(account_id, confirm, delete_after, actor="mcp")
+
+
+@server.tool()
+def ezra_get_post(post_id: int) -> dict[str, Any]:
+    """One post: status, platform_state (processing/private/scheduled/public/deleted), error_code,
+    warnings (e.g. thumbnail), upload_progress, URL and metric history."""
+    d = publishing.post_dict(publishing.get_post(post_id))
+    d["metrics"] = metrics.history(post_id)
+    return d
+
+
+@server.tool()
+def ezra_refresh_posts() -> list[dict[str, Any]]:
+    """Ask the platforms about posts still processing or waiting on a schedule."""
+    return publishing.refresh_statuses()
+
+
+@server.tool()
+def ezra_retry_post(post_id: int) -> dict[str, Any]:
+    """Retry a failed post (a YouTube upload resumes its session; it never uploads twice)."""
+    return publishing.retry_post(post_id, actor="mcp")
+
+
+@server.tool()
+def ezra_cancel_post(post_id: int) -> dict[str, Any]:
+    """Cancel a scheduled post (a YouTube video already uploaded stays private). Ask the human first."""
+    return publishing.post_dict(publishing.cancel_post(post_id, actor="mcp"))
+
+
+@server.tool()
+def ezra_reschedule_post(post_id: int, when: str, timezone: str | None = None) -> dict[str, Any]:
+    """Move a scheduled post to a new time (ISO datetime in `timezone`). Ask the human first."""
+    return publishing.post_dict(publishing.reschedule_post(post_id, when, timezone, actor="mcp"))
+
+
+@server.tool()
+def ezra_update_post(post_id: int, title: str | None = None, description: str | None = None,
+                     tags: list[str] | None = None, privacy: str | None = None,
+                     confirm: bool = False) -> dict[str, Any]:
+    """Edit a video already on YouTube. Dry run unless confirm=true, which only after the human says yes."""
+    return publishing.update_post(post_id, title=title, description=description, tags=tags, privacy=privacy,
+                                  confirm=confirm, actor="mcp")
+
+
+@server.tool()
+def ezra_delete_post(post_id: int, confirm: bool = False) -> dict[str, Any]:
+    """Delete the video on YouTube. PERMANENT. Dry run unless confirm=true; only when the human
+    explicitly asked to delete this post."""
+    return publishing.delete_post(post_id, confirm, actor="mcp")
 
 
 def _latest(history: list[dict[str, Any]]) -> dict[str, Any] | None:

@@ -1,7 +1,7 @@
 """Publishing adapters.
 
-youtube       YouTube Data API v3: resumable upload, privacyStatus / publishAt
-              scheduling, statistics for metrics. OAuth 2.0 + PKCE.
+youtube       YouTube Data API v3 (publishing/youtube.py): chunked resumable upload
+              that resumes instead of re-uploading, thumbnails, publishAt, lifecycle.
 tiktok        TikTok Content Posting API (Direct Post, FILE_UPLOAD chunks),
               status fetch, video/query metrics. Unaudited apps post SELF_ONLY.
 instagram     Instagram API with Instagram Login: REELS container with
@@ -27,87 +27,7 @@ import httpx
 from .. import secrets
 from ..config import get_settings
 from .base import MetricsResult, PostRequest, Publisher, PublishError, PublishResult, expires, with_query
-
-
-class YouTubePublisher(Publisher):
-    name = "youtube"
-    platforms = ("youtube",)
-    supports_scheduling = True
-    oauth_authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
-    token_url = "https://oauth2.googleapis.com/token"
-    upload_url = "https://www.googleapis.com/upload/youtube/v3/videos"
-    api = "https://www.googleapis.com/youtube/v3"
-    oauth_scopes = ("https://www.googleapis.com/auth/youtube.upload",
-                    "https://www.googleapis.com/auth/youtube.readonly")
-    client_secret_ref = "youtube-client"
-
-    def authorize_url(self, state: str, redirect_uri: str, code_challenge: str) -> str:
-        c = self.client_credentials()
-        return with_query(self.oauth_authorize_url, {
-            "client_id": c["client_id"], "redirect_uri": redirect_uri, "response_type": "code",
-            "scope": " ".join(self.oauth_scopes), "access_type": "offline", "prompt": "consent",
-            "state": state, "code_challenge": code_challenge, "code_challenge_method": "S256"})
-
-    def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None) -> dict[str, Any]:
-        c = self.client_credentials()
-        tok = self._check(self.http.post(self.token_url, data={
-            "code": code, "client_id": c["client_id"], "client_secret": c["client_secret"],
-            "redirect_uri": redirect_uri, "grant_type": "authorization_code", "code_verifier": code_verifier}),
-            "token exchange")
-        tok = expires(tok)
-        ch = self._check(self.http.get(f"{self.api}/channels", params={"part": "snippet", "mine": "true"},
-                                       headers={"Authorization": f"Bearer {tok['access_token']}"}), "channel lookup")
-        items = ch.get("items") or []
-        tok["account"] = items[0]["snippet"]["title"] if items else "youtube"
-        tok["channel_id"] = items[0]["id"] if items else None
-        return tok
-
-    def refresh(self, token: dict[str, Any]) -> dict[str, Any]:
-        c = self.client_credentials()
-        new = self._check(self.http.post(self.token_url, data={
-            "client_id": c["client_id"], "client_secret": c["client_secret"],
-            "refresh_token": token["refresh_token"], "grant_type": "refresh_token"}), "token refresh")
-        return expires({**token, **new, "expires_at": None})
-
-    def publish(self, account: dict[str, Any], req: PostRequest, platform: str) -> PublishResult:
-        tok = self.token(account)
-        status: dict[str, Any] = {"privacyStatus": "private" if req.visibility == "private" else
-                                  "unlisted" if req.visibility == "unlisted" else "public",
-                                  "selfDeclaredMadeForKids": False}
-        if req.scheduled_at and req.visibility == "public":
-            status.update(privacyStatus="private", publishAt=req.scheduled_at.astimezone(UTC)
-                          .strftime("%Y-%m-%dT%H:%M:%S.000Z"))
-        body = {"snippet": {"title": (req.title or req.caption)[:100], "description": req.description or req.caption,
-                            "tags": [h.lstrip("#") for h in req.hashtags][:15], "categoryId": "22"},
-                "status": status}
-        size = req.video.stat().st_size
-        headers = {"Authorization": f"Bearer {tok['access_token']}", "X-Upload-Content-Type": "video/mp4",
-                   "X-Upload-Content-Length": str(size), "Content-Type": "application/json; charset=UTF-8"}
-        init = self.http.post(with_query(self.upload_url, {"uploadType": "resumable", "part": "snippet,status"}),
-                              headers=headers, content=json.dumps(body))
-        self._check(init, "upload init")
-        location = init.headers.get("Location") or init.headers.get("location")
-        if not location:
-            raise PublishError("YouTube did not return an upload session URL")
-        with req.video.open("rb") as fh:
-            done = self._check(self.http.put(location, content=fh.read(), headers={
-                "Authorization": f"Bearer {tok['access_token']}", "Content-Type": "video/mp4"}), "upload")
-        vid = done.get("id")
-        if not vid:
-            raise PublishError(f"YouTube upload returned no video id: {str(done)[:300]}")
-        return PublishResult("scheduled" if "publishAt" in status else "published", vid,
-                             f"https://www.youtube.com/shorts/{vid}", done)
-
-    def metrics(self, account: dict[str, Any], external_id: str) -> MetricsResult | None:
-        tok = self.token(account)
-        d = self._check(self.http.get(f"{self.api}/videos", params={"part": "statistics", "id": external_id},
-                                      headers={"Authorization": f"Bearer {tok['access_token']}"}), "statistics")
-        items = d.get("items") or []
-        if not items:
-            return None
-        st = items[0].get("statistics", {})
-        return MetricsResult(views=_int(st.get("viewCount")), likes=_int(st.get("likeCount")),
-                             comments=_int(st.get("commentCount")), raw=st)
+from .youtube import YouTubePublisher
 
 
 class TikTokPublisher(Publisher):

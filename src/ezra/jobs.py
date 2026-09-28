@@ -58,6 +58,7 @@ def registry() -> dict[str, TaskFn]:
 class JobContext:
     job_id: int
     payload: dict[str, Any]
+    final_attempt: bool = True          # no retry follows if this attempt fails
 
     def progress(self, fraction: float, message: str | None = None) -> None:
         with db.session() as s:
@@ -160,7 +161,7 @@ def claim(job_id: int | None = None, kinds: list[str] | None = None) -> Job | No
 def run(job: Job) -> Job:
     """Execute a claimed job in this process and record the outcome."""
     fn = registry().get(job.kind)
-    ctx = JobContext(job.id, job.payload or {})
+    ctx = JobContext(job.id, job.payload or {}, job.attempts >= job.max_attempts)
     try:
         if fn is None:
             raise ValueError(f"no task registered for {job.kind!r}")
@@ -197,7 +198,8 @@ def _record_failure(job_id: int, exc: BaseException) -> None:
         error: dict[str, Any] = {"type": type(exc).__name__, "message": str(exc)[:4000],
                                  "traceback": traceback.format_exc()[-6000:], "attempt": job.attempts}
         job.error = error
-        permanent = isinstance(exc, (ValueError, LookupError, PermissionError))
+        # an exception can declare itself permanent (quota exhausted, invalid input, revoked access)
+        permanent = isinstance(exc, (ValueError, LookupError, PermissionError)) or getattr(exc, "permanent", False)
         if not permanent and job.attempts < job.max_attempts:
             delay = min(300, 5 * 2 ** (job.attempts - 1))
             job.status = "queued"

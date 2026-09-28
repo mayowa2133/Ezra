@@ -134,7 +134,18 @@ async def _secret(_: Request, e: secrets.SecretError) -> JSONResponse:
 
 @app.exception_handler(publishing.PublishError)
 async def _publish(_: Request, e: publishing.PublishError) -> JSONResponse:
-    return JSONResponse({"detail": str(e)}, status_code=502)
+    code = getattr(e, "code", "publish_error")
+    status = 424 if code in ("client_not_configured", "not_connected", "credential_missing") else \
+        409 if code in ("private_only", "scope_missing", "auth_revoked", "auth_invalid", "refresh_token_missing") \
+        else 502
+    return JSONResponse({"detail": str(e), "error_code": code, "reconnect": getattr(e, "reconnect", False)},
+                        status_code=status)
+
+
+@app.exception_handler(jobs.RetryableError)
+async def _retryable(_: Request, e: jobs.RetryableError) -> JSONResponse:
+    return JSONResponse({"detail": str(e), "error_code": getattr(e, "code", "transient"), "retryable": True},
+                        status_code=503)
 
 
 # --- media signing -------------------------------------------------------------------------
@@ -618,6 +629,52 @@ def retry_post(post_id: int) -> dict[str, Any]:
     return publishing.retry_post(post_id, actor="api")
 
 
+@app.get("/api/posts/{post_id}", dependencies=[Auth])
+def get_post(post_id: int) -> dict[str, Any]:
+    d = publishing.post_dict(publishing.get_post(post_id))
+    d["metrics"] = metrics.history(post_id)
+    return d
+
+
+@app.post("/api/posts/refresh", dependencies=[Auth])
+def refresh_posts() -> list[dict[str, Any]]:
+    return publishing.refresh_statuses()
+
+
+class RescheduleBody(BaseModel):
+    when: str
+    timezone: str | None = None
+
+
+@app.post("/api/posts/{post_id}/reschedule", dependencies=[Auth])
+def reschedule(post_id: int, body: RescheduleBody) -> dict[str, Any]:
+    return publishing.post_dict(publishing.reschedule_post(post_id, body.when, body.timezone, actor="api"))
+
+
+class PostUpdateBody(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    privacy: str | None = None
+    confirm: bool = False
+
+
+@app.post("/api/posts/{post_id}/update", dependencies=[Auth])
+def update_post(post_id: int, body: PostUpdateBody) -> dict[str, Any]:
+    return publishing.update_post(post_id, title=body.title, description=body.description, tags=body.tags,
+                                  privacy=body.privacy, confirm=body.confirm, actor="api")
+
+
+class ConfirmBody(BaseModel):
+    confirm: bool = False
+
+
+@app.post("/api/posts/{post_id}/delete", dependencies=[Auth])
+def delete_post(post_id: int, body: ConfirmBody) -> dict[str, Any]:
+    """Deletes the video on YouTube. Permanent; a dry run unless confirm."""
+    return publishing.delete_post(post_id, body.confirm, actor="api")
+
+
 class MetricBody(BaseModel):
     views: int | None = None
     likes: int | None = None
@@ -704,6 +761,27 @@ def integrations() -> dict[str, Any]:
 @app.get("/api/integrations/{provider}/connect", dependencies=[Auth])
 def connect(provider: str) -> dict[str, Any]:
     return publishing.connect_start(provider)
+
+
+@app.get("/api/accounts/{account_id}/health", dependencies=[Auth])
+def account_health(account_id: int, live: bool = False) -> dict[str, Any]:
+    return publishing.account_health(account_id, check_live=live)
+
+
+@app.post("/api/accounts/{account_id}/disconnect", dependencies=[Auth])
+def disconnect(account_id: int) -> dict[str, Any]:
+    return publishing.disconnect_account(account_id, actor="api")
+
+
+class TestUploadBody(BaseModel):
+    confirm: bool = False
+    delete_after: bool = False
+
+
+@app.post("/api/accounts/{account_id}/test-upload", dependencies=[Auth])
+def test_upload(account_id: int, body: TestUploadBody) -> dict[str, Any]:
+    """Upload a generated 5 s test pattern as a private video (dry run unless confirm)."""
+    return publishing.test_private_upload(account_id, body.confirm, body.delete_after, actor="api")
 
 
 @app.get("/api/integrations/{provider}/callback")

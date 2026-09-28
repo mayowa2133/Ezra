@@ -103,7 +103,8 @@ def attach_broll(ctx: JobContext) -> dict[str, Any]:
 def publish_post(ctx: JobContext) -> dict[str, Any]:
     from . import publishing
 
-    return publishing.run_publish(int(ctx.payload["post_id"]))
+    return publishing.run_publish(int(ctx.payload["post_id"]), final_attempt=ctx.final_attempt,
+                                  progress=ctx.progress)
 
 
 @task("refresh_post_status")

@@ -311,6 +311,10 @@ class Post(Timestamped, Base):
     features: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)   # snapshot of what produced this post
     actual_payout: Mapped[float | None] = mapped_column(Float)
     raw_response: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(60))     # structured: quota_exceeded, auth_revoked, ...
+    platform_state: Mapped[str | None] = mapped_column(String(30))  # processing|private|scheduled|public|deleted
+    upload_state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)   # resumable session, progress
+    warnings: Mapped[list[Any]] = mapped_column(JSON, default=list)            # secondary failures (thumbnail, ...)
 
 
 class MetricSnapshot(Base):
@@ -329,6 +333,11 @@ class MetricSnapshot(Base):
     completion_rate: Mapped[float | None] = mapped_column(Float)
     followers_gained: Mapped[int | None] = mapped_column(Integer)
     retention: Mapped[list[Any] | None] = mapped_column(JSON)
+    watch_minutes: Mapped[float | None] = mapped_column(Float)          # estimatedMinutesWatched
+    avg_view_pct: Mapped[float | None] = mapped_column(Float)           # averageViewPercentage (0-100+)
+    subscribers_lost: Mapped[int | None] = mapped_column(Integer)
+    window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # report window, when windowed
+    window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 

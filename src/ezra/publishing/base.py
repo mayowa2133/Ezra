@@ -14,6 +14,7 @@ import hashlib
 import secrets as pysecrets
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +28,22 @@ from ..jobs import RetryableError
 
 
 class PublishError(RuntimeError):
-    pass
+    """A publishing failure the job queue won't retry: invalid input, missing or revoked access,
+    exhausted quota. `code` is stable and shown in the CLI, API, MCP and dashboard."""
+    permanent = True
+
+    def __init__(self, message: str, code: str = "publish_error", *, reconnect: bool = False,
+                 detail: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.code, self.reconnect, self.detail = code, reconnect, detail or {}
+
+
+class RetryablePublishError(RetryableError):
+    """Transient: rate limits, 5xx, dropped connections. Retried with backoff."""
+
+    def __init__(self, message: str, code: str = "transient", detail: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.code, self.detail = code, detail or {}
 
 
 @dataclass
@@ -40,6 +56,9 @@ class PostRequest:
     visibility: str = "public"            # public | private | unlisted
     scheduled_at: datetime | None = None  # platform-side scheduling when supported
     thumbnail: Path | None = None
+    upload_state: dict[str, Any] = field(default_factory=dict)          # resume a previous attempt
+    on_state: Callable[[dict[str, Any]], None] | None = None             # persist resumable state as it changes
+    on_progress: Callable[[int, int], None] | None = None                # (bytes sent, total)
 
 
 @dataclass
@@ -48,6 +67,8 @@ class PublishResult:
     external_id: str | None
     url: str | None
     raw: dict[str, Any] = field(default_factory=dict)
+    platform_state: str | None = None     # the platform's view: processing | private | scheduled | public | ...
+    warnings: list[dict[str, Any]] = field(default_factory=list)   # secondary failures, e.g. thumbnail
 
 
 @dataclass
@@ -102,9 +123,10 @@ class Publisher(ABC):
     # --- helpers ---------------------------------------------------------------------------
     def _check(self, r: httpx.Response, what: str) -> dict[str, Any]:
         if r.status_code in (429, 500, 502, 503, 504):
-            raise RetryableError(f"{self.name} {what}: HTTP {r.status_code} {r.text[:300]}")
+            raise RetryablePublishError(f"{self.name} {what}: HTTP {r.status_code} {r.text[:300]}",
+                                        "rate_limited" if r.status_code == 429 else "server_error")
         if r.status_code >= 400:
-            raise PublishError(f"{self.name} {what}: HTTP {r.status_code} {r.text[:500]}")
+            raise PublishError(f"{self.name} {what}: HTTP {r.status_code} {r.text[:500]}", "http_error")
         try:
             return r.json() if r.content else {}
         except ValueError:
@@ -115,22 +137,27 @@ class Publisher(ABC):
         ref = account.get("credential_ref")
         if not ref:
             raise PublishError(f"account {account.get('handle')} on {self.name} has no stored credential; "
-                               f"connect it first (ezra accounts connect {self.name})")
+                               f"connect it first (ezra accounts connect {self.name})", "not_connected")
         tok = secrets.get(ref)
         if not tok:
-            raise PublishError(f"credential {ref!r} missing from the secret store; reconnect the account")
-        if isinstance(tok, dict) and tok.get("expires_at") and tok["expires_at"] - time.time() < 120:
+            raise PublishError(f"credential {ref!r} missing from the secret store; reconnect the account",
+                               "credential_missing", reconnect=True)
+        if isinstance(tok, dict) and tok.get("expires_at") is not None and tok["expires_at"] - time.time() < 120:
             tok = self.refresh(tok)
             secrets.put(ref, tok)
         return tok if isinstance(tok, dict) else {"access_token": tok}
 
     def client_credentials(self) -> dict[str, Any]:
         assert self.client_secret_ref
-        cred = secrets.require(self.client_secret_ref, f"{self.name} OAuth app credentials")
+        try:
+            cred = secrets.require(self.client_secret_ref, f"{self.name} OAuth app credentials")
+        except secrets.SecretError as e:
+            raise PublishError(str(e), "client_not_configured") from e
         if isinstance(cred, dict) and len(cred) == 1 and set(cred) <= {"web", "installed"}:
             cred = next(iter(cred.values()))   # Google's downloaded client_secret.json
         if not isinstance(cred, dict) or not cred.get("client_id") or not cred.get("client_secret"):
-            raise PublishError(f"secret {self.client_secret_ref!r} must be JSON with client_id and client_secret")
+            raise PublishError(f"secret {self.client_secret_ref!r} must be JSON with client_id and client_secret",
+                               "client_not_configured")
         return cred
 
 

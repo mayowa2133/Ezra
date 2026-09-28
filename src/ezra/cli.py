@@ -54,10 +54,11 @@ brand_app = typer.Typer(no_args_is_help=True, help="Brand kits.")
 jobs_app = typer.Typer(no_args_is_help=True, help="Background jobs.")
 live_app = typer.Typer(no_args_is_help=True, help="Live clipping.")
 db_app = typer.Typer(no_args_is_help=True, help="Database.")
+post_app = typer.Typer(no_args_is_help=True, help="One post: inspect, retry, reschedule, cancel, edit, delete.")
 for name, sub in (("campaign", campaign_app), ("source", source_app), ("clip", clip_app),
                   ("accounts", accounts_app), ("secrets", secrets_app), ("metrics", metrics_app),
                   ("experiment", exp_app), ("brandkit", brand_app), ("jobs", jobs_app), ("live", live_app),
-                  ("db", db_app)):
+                  ("db", db_app), ("post", post_app)):
     app.add_typer(sub, name=name)
 console = Console()
 
@@ -484,7 +485,11 @@ def publish(clip: list[int] | None = typer.Option(None, "--clip"),
             p = publishing.get_post(pid)
             mark = "[green]✓[/]" if p.status in ("published", "scheduled") else ("[yellow]…[/]" if p.status ==
                                                                                  "publishing" else "[red]✗[/]")
-            console.print(f"  {mark} post {pid} {p.platform} {p.status} {p.url or ''} {p.error or ''}")
+            state = f" [{p.platform_state}]" if p.platform_state else ""
+            err = f" {p.error_code}: {p.error}" if p.error else ""
+            console.print(f"  {mark} post {pid} {p.platform} {p.status}{state} {p.url or ''}{err}")
+            for w in p.warnings or []:
+                console.print(f"    [yellow]warning ({w.get('code')}):[/] {w.get('message')}")
 
 
 @app.command()
@@ -521,11 +526,101 @@ def accounts_add(platform: str, provider: str, handle: str, credential_ref: str 
 
 
 @accounts_app.command("connect")
-def accounts_connect(provider: str) -> None:
-    """Start OAuth for youtube | tiktok | instagram; open the printed URL."""
-    out = publishing.connect_start(provider)
-    console.print(f"Open this URL to authorize (redirects to {out['redirect_uri']}; the API must be running):\n"
-                  f"{out['authorize_url']}")
+def accounts_connect(provider: str,
+                     via_api: bool = typer.Option(False, "--via-api", help="Redirect to the running API instead "
+                                                  "of a local listener (web OAuth clients)"),
+                     port: int | None = typer.Option(None, help="Local callback port "
+                                                     "(default EZRA_YOUTUBE_LOOPBACK_PORT)"),
+                     browser: bool = typer.Option(True, help="Open the consent page in the browser")) -> None:
+    """Connect youtube | tiktok | instagram with OAuth. By default a one-shot listener on 127.0.0.1
+    receives the redirect, so the API doesn't need to be running (a Google "Desktop app" client)."""
+    if via_api:
+        out = publishing.connect_start(provider)
+        console.print(f"Open this URL to authorize (redirects to {out['redirect_uri']}; the API must be running):\n"
+                      f"{out['authorize_url']}")
+        return
+    from .config import get_settings
+    from .publishing import loopback
+
+    acc = loopback.connect(provider, port or get_settings().youtube_loopback_port, open_browser=browser,
+                           show=console.print)
+    h = publishing.account_health(acc.id)
+    console.print(f"[green]connected[/] account {acc.id}: {acc.handle} ({h.get('channel_id') or acc.platform})")
+    if provider == "youtube":
+        console.print(f"  upload: {h['can_upload']}  analytics: {h['can_read_analytics']}  "
+                      f"edit/delete: {h['can_manage']}  mode: {h['mode']}")
+
+
+@accounts_app.command("health")
+def accounts_health(account_id: int, live: bool = typer.Option(False, help="Also call the platform API")) -> None:
+    """Token and permission status for an account (token values are never shown)."""
+    console.print_json(data=publishing.account_health(account_id, check_live=live))
+
+
+@accounts_app.command("disconnect")
+def accounts_disconnect(account_id: int, yes: bool = False) -> None:
+    """Revoke the platform token, delete it from the secret store and mark the account disconnected."""
+    a = publishing.account_health(account_id)
+    if not yes and console.input(f"Disconnect {a['handle']} ({a['provider']}) and revoke its token? [y/N] "
+                                 ).strip().lower() not in ("y", "yes"):
+        return
+    console.print_json(data=publishing.disconnect_account(account_id, actor="cli"))
+
+
+@post_app.command("show")
+def post_show(post_id: int) -> None:
+    """Status, platform state, error code, warnings and upload progress."""
+    console.print_json(data=publishing.post_dict(publishing.get_post(post_id)))
+
+
+@post_app.command("refresh")
+def post_refresh() -> None:
+    """Ask the platforms about posts still processing or waiting on a schedule."""
+    console.print_json(data=publishing.refresh_statuses())
+
+
+@post_app.command("retry")
+def post_retry(post_id: int) -> None:
+    """Retry a failed post (a YouTube upload resumes its session instead of starting again)."""
+    out = publishing.retry_post(post_id, actor="cli")
+    claimed = jobs.claim(out["job_id"])
+    if claimed is not None:
+        jobs.run(claimed)
+    console.print_json(data=publishing.post_dict(publishing.get_post(post_id)))
+
+
+@post_app.command("cancel")
+def post_cancel(post_id: int) -> None:
+    """Cancel a scheduled post (a YouTube video already uploaded stays private)."""
+    console.print_json(data=publishing.post_dict(publishing.cancel_post(post_id, actor="cli")))
+
+
+@post_app.command("reschedule")
+def post_reschedule(post_id: int, when: str, tz: str | None = None) -> None:
+    """Move a scheduled post, e.g. `ezra post reschedule 12 2026-10-02T18:00 --tz America/Toronto`."""
+    console.print_json(data=publishing.post_dict(publishing.reschedule_post(post_id, when, tz, actor="cli")))
+
+
+@post_app.command("update")
+def post_update(post_id: int, title: str | None = None, description: str | None = None,
+                tags: str | None = typer.Option(None, help="Comma-separated"),
+                privacy: str | None = typer.Option(None, help="private | unlisted | public"),
+                yes: bool = False) -> None:
+    """Edit a video already on YouTube (needs EZRA_YOUTUBE_MANAGE=1 at connect)."""
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    pre = publishing.update_post(post_id, title=title, description=description, tags=tag_list, privacy=privacy)
+    console.print_json(data=pre)
+    if yes or console.input("Apply these changes on YouTube? [y/N] ").strip().lower() in ("y", "yes"):
+        console.print_json(data=publishing.update_post(post_id, title=title, description=description, tags=tag_list,
+                                                       privacy=privacy, confirm=True, actor="cli"))
+
+
+@post_app.command("delete")
+def post_delete(post_id: int, yes: bool = False) -> None:
+    """Delete the video on YouTube. Permanent: YouTube can't restore it."""
+    console.print_json(data=publishing.delete_post(post_id))
+    if yes or console.input("Delete it permanently on YouTube? [y/N] ").strip().lower() in ("y", "yes"):
+        console.print_json(data=publishing.delete_post(post_id, confirm=True, actor="cli"))
 
 
 @secrets_app.command("set")

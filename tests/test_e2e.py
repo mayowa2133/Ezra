@@ -203,7 +203,10 @@ async def _mcp_flow(home: str) -> None:
                     "ezra_render_candidate", "ezra_render_top", "ezra_list_clips", "ezra_approve_clip",
                     "ezra_reject_clip", "ezra_update_clip", "ezra_generate_metadata", "ezra_publish_clip",
                     "ezra_schedule_clip", "ezra_list_posts", "ezra_sync_metrics", "ezra_campaign_report",
-                    "ezra_earnings_report", "ezra_optimize_campaign", "ezra_run_campaign"}
+                    "ezra_earnings_report", "ezra_optimize_campaign", "ezra_run_campaign",
+                    "ezra_list_accounts", "ezra_account_health", "ezra_youtube_test_upload", "ezra_get_post",
+                    "ezra_refresh_posts", "ezra_retry_post", "ezra_cancel_post", "ezra_reschedule_post",
+                    "ezra_update_post", "ezra_delete_post"}
         assert required <= names, required - names
         call = lambda n, **kw: s.call_tool(n, kw)
         cands = data(await call("ezra_list_candidates", campaign="demo", top=3))
@@ -224,6 +227,7 @@ async def _mcp_flow(home: str) -> None:
         data(await call("ezra_approve_clip", clip_id=clip_id))
         dry = data(await call("ezra_publish_clip", clip_id=clip_id, platforms=["tiktok"]))
         assert dry["problems"] and "no tiktok account" in dry["problems"][0]
+        assert data(await call("ezra_list_accounts")) in ([], None)
 
 
 def test_mcp_workflow_over_stdio(use_processed):
