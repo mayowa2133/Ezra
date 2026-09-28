@@ -111,3 +111,45 @@ def test_cluster_defaults_to_one_speaker_without_a_real_split():
     labels, conf = cluster(np.vstack([a, b]))               # two distinct voices
     assert len(set(labels.tolist())) == 2 and conf > 0.25
     assert (labels[:60] == labels[0]).mean() > 0.95 and (labels[60:] == labels[60]).mean() > 0.95
+
+
+def test_pyannote_without_access_falls_back_to_local_and_says_so(tiny_video, monkeypatch):
+    """EZRA_DIARIZER=pyannote with no HF token: analysis continues with the local diarizer, and the
+    stored result records the fallback instead of failing the whole transcription."""
+    from ezra import analysis, sources, transcription
+    from ezra.config import reset_settings
+    from ezra.transcription.base import Segment, TranscriptResult, Word
+
+    monkeypatch.setenv("EZRA_DIARIZER", "pyannote")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    reset_settings()
+
+    class FakeASR:
+        name = "fake"
+
+        def version(self) -> str:
+            return "fake-1"
+
+        def transcribe(self, media, progress=None):
+            words = [Word(f"word{i}", 0.5 + i * 0.4, 0.8 + i * 0.4, 0.9) for i in range(20)]
+            words[-1].w = "end."
+            seg = Segment(words[0].s, words[-1].e, " ".join(w.w for w in words), words)
+            return TranscriptResult(language="en", duration=12.0, segments=[seg], provider="fake", model="fake")
+
+    monkeypatch.setattr(transcription, "get_provider", lambda name=None: FakeASR())
+    src = sources.ingest(tiny_video, rights_basis="owned")
+    tr = transcription.ensure_transcript(src.id)
+    assert tr.diarizer.endswith("(fallback)")
+    row = analysis.get(src.id, "speakers")
+    assert row.data["fallback"]["requested"] == "pyannote" and "huggingface" in row.data["fallback"]["reason"]
+    assert row.data["uncertain"] is False
+
+
+def test_uncertain_speaker_labels_send_the_speaker_rule_to_review():
+    from ezra import campaigns, compliance
+
+    (c,) = campaigns.import_text('{"name": "Speakers", "allowed_speakers": ["S1"]}')
+    ok = compliance.evaluate(c, "candidate", speakers=["S1"])
+    unsure = compliance.evaluate(c, "candidate", speakers=["S1"], speakers_uncertain=True)
+    rule = lambda r: next(x for x in r["checked"] if x["kind"] == "speakers")
+    assert rule(ok)["outcome"] == "pass" and rule(unsure)["outcome"] == "review"

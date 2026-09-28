@@ -817,10 +817,13 @@ def jobs_retry(job_id: int) -> None:
 @app.command()
 def run(campaign: str, top: int = 5, max_candidates: int = 40,
         autonomous: bool = typer.Option(False, help="Auto-approve PASS clips and publish (opt-in, see docs)"),
+        agent: str | None = typer.Option(None, help="claude | codex | local: a model critic picks each clip's "
+                                                    "start/end and scores it (falls back to heuristics)"),
         queue: bool = False) -> None:
     """analyze → candidates → rank → render top N → review queue (→ publish with --autonomous)."""
     out = run_job("run_campaign", {"campaign": campaign, "render_top": top, "max_candidates": max_candidates,
-                                   "autonomous": autonomous}, queue, f"run {campaign}", dedupe_key=f"run-{campaign}")
+                                   "autonomous": autonomous, "agent": agent}, queue, f"run {campaign}",
+                  dedupe_key=f"run-{campaign}")
     if queue:
         return
     console.print(f"{out['sources']} source(s) · {out['candidates']} candidates ({out['publishable']} publishable) · "
@@ -835,6 +838,9 @@ def run(campaign: str, top: int = 5, max_candidates: int = 40,
                       "-" if ev.get("ev_per_post") is None else f"${ev['ev_per_post']:,.2f}",
                       f"\"{_clip_text(cand.get('opens_with') or cand.get('transcript') or '', 60)}\"")
         console.print(t)
+    if out.get("critic"):
+        console.print(f"critic scored {out['critic']['critic_scored']} candidates "
+                      f"({out['critic']['heuristic_only']} kept heuristic scores)")
     if "autonomous" in out:
         console.print(f"autonomous: {out['autonomous']}")
     console.print("next: `ezra review` (or the dashboard /review)")

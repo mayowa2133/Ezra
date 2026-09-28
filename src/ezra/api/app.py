@@ -312,6 +312,7 @@ class RunBody(BaseModel):
     max_candidates: int = 40
     autonomous: bool = False
     spec: dict[str, Any] | None = None
+    agent: str | None = None          # claude | codex | local: the model critic for this run
 
 
 @app.post("/api/campaigns/{ref}/run", dependencies=[Auth], status_code=202)

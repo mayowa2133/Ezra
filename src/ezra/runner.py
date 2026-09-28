@@ -35,7 +35,20 @@ Progress = Callable[[float, str], None]
 
 
 def run_campaign(campaign: str | int, render_top: int = 5, max_candidates: int = 40, autonomous: bool = False,
-                 spec: dict[str, Any] | None = None, progress: Progress | None = None) -> dict[str, Any]:
+                 spec: dict[str, Any] | None = None, progress: Progress | None = None,
+                 agent: str | None = None) -> dict[str, Any]:
+    """analyze → candidates → rank → render → review. `agent` (claude | codex | local) runs the model
+    critic for this run: it reads each shortlisted candidate with surrounding sentences, picks the
+    best start and end, scores the kept cut, and batches are parallel; a failed batch falls back to
+    heuristics without stopping the run."""
+    from . import llm
+
+    with llm.using(agent):
+        return _run_campaign(campaign, render_top, max_candidates, autonomous, spec, progress, agent)
+
+
+def _run_campaign(campaign: str | int, render_top: int, max_candidates: int, autonomous: bool,
+                  spec: dict[str, Any] | None, progress: Progress | None, agent: str | None) -> dict[str, Any]:
     say: Progress = progress or (lambda f, m: None)
     camp = campaigns.get(campaign)
     srcs = sources.list_sources(camp.slug)
@@ -58,17 +71,28 @@ def run_campaign(campaign: str | int, render_top: int = 5, max_candidates: int =
         stale = before is not None and after is not None and before.id != after.id
         if stale or not candidates.list_candidates(camp.slug, src.id):
             candidates.find_candidates(src.id, camp.slug, max_candidates, progress=finding)
+        elif agent:
+            # candidates exist: an explicit agent run re-ranks them with the critic
+            candidates.rank(source_id=src.id, progress=finding)
     say(0.72, "rendering the strongest candidates")
     clips = render.render_top(camp.slug, top=render_top, spec=spec,
                               progress=lambda f, m: say(0.72 + 0.23 * f, m))
     report: dict[str, Any] = {"campaign": camp.slug, "sources": n,
                               "candidates": len(candidates.list_candidates(camp.slug, include_failed=True)),
                               "publishable": len(candidates.list_candidates(camp.slug)),
-                              "rendered": [c.id for c in clips], "review_queue": len(review.queue(camp.slug))}
+                              "rendered": [c.id for c in clips], "review_queue": len(review.queue(camp.slug)),
+                              "critic": _critic_summary(camp.id) if agent else None}
     if autonomous:
         report["autonomous"] = _autonomous(camp, clips)
     say(1.0, "done")
     return report
+
+
+def _critic_summary(campaign_id: int) -> dict[str, Any]:
+    """How many shortlisted candidates the model critic actually scored (the rest fell back)."""
+    cands = candidates.list_candidates(campaign_id, include_failed=True)
+    judged = [c for c in cands if (c.scorer or "").endswith("+heuristic") and c.scorer != "agent+heuristic"]
+    return {"critic_scored": len(judged), "heuristic_only": len([c for c in cands if c.scorer == "heuristic"])}
 
 
 def autonomous_allowed(camp: Campaign) -> tuple[bool, str]:

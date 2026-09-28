@@ -152,3 +152,33 @@ def test_face_timing_and_its_effect_on_hook_and_retention():
     faceless, why = heuristic.score(_features(opening_face=False, longest_faceless=14.0))
     assert faceful["hook"] - faceless["hook"] == 12
     assert faceless["retention"] < faceful["retention"] and "nobody on screen" in why["retention"]
+
+
+def test_llm_using_scopes_the_provider_and_rejects_unknown_names():
+    import pytest
+
+    from ezra import llm
+
+    assert llm.get_llm().name == "heuristic"
+    with llm.using("claude"):
+        assert llm.get_llm().name == "claude-cli"
+        with llm.using(None):
+            assert llm.get_llm().name == "claude-cli"          # None keeps the outer choice
+    assert llm.get_llm().name == "heuristic"
+    with pytest.raises(ValueError, match="unknown agent"), llm.using("gpt-9"):
+        pass
+    assert llm.get_llm().name == "heuristic"
+
+
+def test_demonstratives_that_point_are_not_dangling_and_segues_are_not_endings():
+    from ezra.candidates import _segue, story_similarity
+    from ezra.scoring.features import _dangling, _first_words
+
+    assert not _dangling(_first_words("This field behind me will be a city", 3))
+    assert not _dangling(_first_words("This is the bathroom for the community", 3))
+    assert _dangling(_first_words("That's why we left", 3)) and _dangling(_first_words("It was huge", 3))
+    assert _segue("Anyway, let's build a football field.") and _segue("Now that the sun is up, go.")
+    assert not _segue("And they had an entire list.")
+    same = story_similarity("Isaac asked for white tiles in his new house", "Isaac, you asked for white tiles")
+    other = story_similarity("Isaac asked for white tiles in his new house", "The current swept the raft away")
+    assert same > 0.35 > other

@@ -16,6 +16,10 @@ CONNECTOR_START = {"so", "and", "but", "or", "because", "anyway", "also", "then"
 DISCOURSE_START = {"you know", "oh yeah", "the reason", "like i", "i mean", "right so", "okay so", "yeah so",
                    "anyway so", "as i", "as we", "so yeah"}
 DANGLING_START = {"he", "she", "they", "it", "that", "this", "those", "these", "him", "her", "them", "there"}
+DEMONSTRATIVES = {"this", "that", "these", "those"}
+# after a demonstrative, these mean it stands alone and points back ("That's why...", "This was...")
+PRONOUN_USE = {"is", "was", "s", "means", "meant", "would", "will", "one", "ones", "has", "had", "happened",
+               "made", "makes", "why", "because", "and", "but", "right", "too", "all", "just", "time"}
 FILLERS = {"um", "uh", "erm", "er", "hmm", "mm", "uhm", "ah"}
 # Sponsor / ad reads: clipping programmes pay for the creator's content, not their ads.
 AD_READ = re.compile(r"\b(sponsor(ed)?( by)?|brought to you by|promo code|use (my )?code|link (is )?in (the )?"
@@ -141,10 +145,29 @@ def _energy(loudness: dict[str, Any] | None, a: float, b: float) -> tuple[float 
     return round((sum(opening) / len(opening) - med) / spread, 2), round((peak - med) / spread, 2)
 
 
+def _dangling(tokens: list[str]) -> bool:
+    """An opening that leans on what came before. A demonstrative that points at something
+    ("This field behind me...", "These kids...") or presents it ("This is the bathroom for the
+    community") is fine on camera; "That's why...", "It was...", "They said..." are not."""
+    if tokens and "'" in tokens[0]:               # "that's" → that, s; "it's" → it, s
+        head, _, tail = tokens[0].partition("'")
+        tokens = [head, tail, *tokens[1:]]
+    if not tokens or tokens[0] not in DANGLING_START:
+        return False
+    if tokens[0] in DEMONSTRATIVES and len(tokens) > 1:
+        nxt = tokens[1]
+        if nxt not in PRONOUN_USE:
+            return False                          # determiner: "this field", "these kids"
+        if tokens[0] == "this" and nxt in ("is", "s") and len(tokens) > 2 and tokens[2] in ("the", "a", "an", "my",
+                                                                                            "our", "your", "where"):
+            return False                          # presentational: "this is the bathroom"
+    return True
+
+
 def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
             face_timeline: list[Any] | None, scenes: list[dict[str, float]],
             topics: list[dict[str, Any]], corpus_df: dict[str, int], n_docs: int,
-            loudness: dict[str, Any] | None = None) -> dict[str, Any]:
+            loudness: dict[str, Any] | None = None, active_floor: float | None = None) -> dict[str, Any]:
     text = win.text
     first = win.segments[0].text if win.segments else ""
     last = win.segments[-1].text if win.segments else ""
@@ -153,6 +176,17 @@ def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
     first_tokens = _first_words(first, 3)
     speech = sum(w.e - w.s for w in words)
     dead_air = sum(max(0.0, min(r["end"], win.end) - max(r["start"], win.start)) for r in silence)
+    if active_floor is not None and activity:
+        # a quiet second is only dead when the picture is still too (a tree falling, an excavator
+        # at work, a reveal with no words is the action)
+        quiet_active = 0.0
+        for r in silence:
+            a, b = max(r["start"], win.start), min(r["end"], win.end)
+            for sec_i in range(int(a), int(b) + 1):
+                overlap = max(0.0, min(b, sec_i + 1) - max(a, sec_i))
+                if overlap and sec_i < len(activity) and activity[sec_i] > active_floor:
+                    quiet_active += overlap
+        dead_air = max(0.0, dead_air - quiet_active)
     gaps = [b.s - a.e for a, b in zip(words, words[1:])]
     long_gaps = sum(g for g in gaps if g > 0.7)
     em_all = emotion_signals(text)
@@ -181,7 +215,7 @@ def extract(win: Window, silence: list[dict[str, float]], activity: list[float],
         "dead_air_ratio": round((dead_air if silence is not None else long_gaps) / max(0.1, win.duration), 3),
         "starts_with_connector": bool(first_tokens) and (first_tokens[0] in CONNECTOR_START
                                                          or " ".join(first_tokens[:2]) in DISCOURSE_START),
-        "starts_with_dangling": bool(first_tokens) and first_tokens[0] in DANGLING_START,
+        "starts_with_dangling": _dangling(first_tokens),
         "starts_with_filler": bool(first_tokens) and first_tokens[0] in FILLERS,
         "first_sentence_words": len(first.split()),
         # "I lost...", but also "In 2019 I lost..." / "Honestly, we..."

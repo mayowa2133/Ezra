@@ -8,6 +8,7 @@ keeps the old one."""
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 from typing import Any
 
@@ -51,6 +52,10 @@ __all__ = [
 SEGMENTER_VERSION = "5"   # bump when token merging/resegment()/speaker assignment/diarizer clustering changes
 
 
+log = logging.getLogger("ezra.transcription")
+UNCERTAIN_SPEAKERS = 0.25   # local diarizer silhouette below this: labels are a guess
+
+
 def _version(provider_version: str, diarizer: str) -> str:
     return hashlib.sha256(f"{provider_version}|{diarizer}|seg{SEGMENTER_VERSION}".encode()).hexdigest()[:16]
 
@@ -75,7 +80,17 @@ def ensure_transcript(source_id: int, provider: str | None = None, diarizer: str
     result: TranscriptResult = tp.transcribe(media, (lambda f: progress(0.8 * f)) if progress else None)
     t_asr = time.time() - t0
     words = merge_split_tokens(result.words)
-    diar = dz.diarize(media, words)
+    fallback: dict[str, str] | None = None
+    try:
+        diar = dz.diarize(media, words)
+    except Exception as e:  # pyannote without HF_TOKEN / package / model access: degrade, don't fail
+        if dz.name == "local":
+            raise
+        from ..diarization import LocalDiarizer
+
+        log.warning("diarizer %s unavailable (%s); using the local diarizer", dz.name, type(e).__name__)
+        fallback = {"requested": dz.name, "reason": f"{type(e).__name__}: {e}"[:300]}
+        diar = LocalDiarizer().diarize(media, words)
     assign_speakers(words, diar.turns)
     segments = resegment(words)
     if progress:
@@ -83,7 +98,8 @@ def ensure_transcript(source_id: int, provider: str | None = None, diarizer: str
     with db.session() as s:
         tr = Transcript(source_id=source_id, provider=result.provider, model=result.model, version=version,
                         language=result.language, duration=result.duration or src.duration,
-                        word_count=len(words), has_speakers=diar.n_speakers > 0, diarizer=dz.name)
+                        word_count=len(words), has_speakers=diar.n_speakers > 0,
+                        diarizer=f"{diar.provider} (fallback)" if fallback else dz.name)
         s.add(tr)
         s.flush()
         for i, seg in enumerate(segments):
@@ -93,8 +109,11 @@ def ensure_transcript(source_id: int, provider: str | None = None, diarizer: str
         tr_id = tr.id
     from ..analysis import store as store_analysis
 
-    store_analysis(source_id, "speakers", dz.name, version, diar.confidence, {
-        "n_speakers": diar.n_speakers, "heuristic": dz.name == "local",
+    uncertain = diar.n_speakers > 1 and diar.confidence is not None and diar.confidence < UNCERTAIN_SPEAKERS
+    store_analysis(source_id, "speakers", diar.provider, version, diar.confidence, {
+        "n_speakers": diar.n_speakers, "heuristic": diar.provider == "local", "fallback": fallback,
+        # weakly separated voices: speaker-dependent logic should ask a person rather than trust labels
+        "uncertain": uncertain,
         "turns": [{"start": t.start, "end": t.end, "speaker": t.speaker} for t in diar.turns]})
     costs.record("transcription", quantity=time.time() - t0, unit="seconds", source_id=source_id,
                  campaign_id=src.campaign_id, provider=result.provider, model=result.model,

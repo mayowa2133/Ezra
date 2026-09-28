@@ -17,6 +17,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
 from sqlalchemy import delete, select
 
 from . import analysis, campaigns, compliance, db, economics, llm, sources
@@ -78,6 +79,10 @@ def scout_windows(source_id: int, segments: list[Segment], topics: list[dict[str
                         and segments[t - 1].sentence_end and segments[t - 1].end - segments[i].start >= min_d
                         and all(x.speaker == host for x in tail)):
                     k = t - 1
+            # nor on a segue into what comes next ("Anyway, let's build a football field.")
+            while k > i and _segue(segments[k].text) and segments[k - 1].sentence_end \
+                    and segments[k - 1].end - segments[i].start >= min_d:
+                k -= 1
             dur = segments[k].end - segments[i].start
             if not (min_d - 0.5 <= dur <= max_d + 0.5) or (i, k) in seen:
                 continue
@@ -86,6 +91,15 @@ def scout_windows(source_id: int, segments: list[Segment], topics: list[dict[str
             out.append(Window(source_id, segments[i].start, segments[k].end, segments[i:k + 1],
                               before=segments[max(0, i - 2):i], after=segments[k + 1:k + 3], topic=topic))
     return out
+
+
+SEGUE = re.compile(r"^(anyway|anyways|now,? (that|let's|it's time)|next(,| up| on)|let's (go|get|head|move|build|"
+                   r"see|check)|but first|meanwhile|so now|time to|after that|and next|okay,? (so|now|let's))\b", re.I)
+
+
+def _segue(text: str) -> bool:
+    """A line that leaves the current moment for the next one."""
+    return bool(SEGUE.match(text.strip()))
 
 
 def _questioner(segments: list[Segment]) -> str | None:
@@ -102,6 +116,38 @@ def _questioner(segments: list[Segment]) -> str | None:
     return top if n >= 3 and n >= 2 * (sum(asked.values()) - n) else None
 
 
+_STORY_STOP = {"that", "this", "with", "have", "what", "just", "they", "there", "their", "about", "going", "gonna",
+               "yeah", "okay", "right", "really", "like", "know", "think", "want", "your", "from", "were", "will",
+               "would", "could", "been", "into", "then", "than", "when", "here", "come", "look", "some", "because",
+               "guys", "doing", "said", "actually", "literally", "thing", "things", "make", "made", "take", "every"}
+
+
+def _story_terms(text: str) -> dict[str, float]:
+    """Content words of a passage, with numbers and names weighted up (they pin down a story)."""
+    terms: dict[str, float] = {}
+    for raw in re.findall(r"\$?[A-Za-z0-9][A-Za-z0-9',.$%]*", text):
+        t = raw.lower().strip(".,'")
+        if len(t) < 4 and not any(ch.isdigit() for ch in t):
+            continue
+        if t in _STORY_STOP:
+            continue
+        w = 2.0 if any(ch.isdigit() for ch in t) or raw[:1].isupper() else 1.0
+        terms[t] = terms.get(t, 0.0) + w
+    return terms
+
+
+def story_similarity(a: str, b: str) -> float:
+    """Cosine similarity of two passages' content words: high when two candidates tell the same
+    story (the same people, numbers and objects), even when they don't overlap in time."""
+    ta, tb = _story_terms(a), _story_terms(b)
+    if not ta or not tb:
+        return 0.0
+    dot = sum(v * tb.get(k, 0.0) for k, v in ta.items())
+    na = sum(v * v for v in ta.values()) ** 0.5
+    nb = sum(v * v for v in tb.values()) ** 0.5
+    return round(dot / (na * nb), 3) if na and nb else 0.0
+
+
 def _containment(a: tuple[float, float], b: tuple[float, float]) -> float:
     inter = max(0.0, min(a[1], b[1]) - max(a[0], b[0]))
     shorter = min(a[1] - a[0], b[1] - b[0])
@@ -114,22 +160,46 @@ def _iou(a: tuple[float, float], b: tuple[float, float]) -> float:
     return inter / union if union > 0 else 0.0
 
 
+OPENER_BIAS = 0.15        # extra weight on the hook when choosing among overlapping cuts of one stretch
+TOPIC_SECONDS = 90.0      # one shortlist slot per this much of a topic (at least max_per_topic)
+
+
 def diverse_shortlist(items: list[dict[str, Any]], limit: int, max_iou: float = 0.45,
                       max_per_topic: int = 4) -> list[dict[str, Any]]:
-    """Greedy non-maximum suppression by content score, capped per topic."""
+    """Greedy non-maximum suppression, capped per topic.
+    - Overlap is containment as well as IoU: a 20 s cut inside a 40 s one is the same stretch, and
+      IoU-only suppression let variants of a few stretches fill the list while others never got in.
+    - Among overlapping cuts of one stretch, the stronger opening wins (content plus extra hook weight).
+    - A topic's cap grows with its length: long videos with a few coarse topics otherwise lose
+      whole stretches.
+    - Slots left after one-per-stretch (short sources) are filled with overlapping variants."""
     chosen: list[dict[str, Any]] = []
     per_topic: dict[str, int] = {}
-    for it in sorted(items, key=lambda x: -x["content"]):
-        span = (it["window"].start, it["window"].end)
-        if any(_iou(span, (c["window"].start, c["window"].end)) > max_iou for c in chosen):
-            continue
-        tkey = (it["window"].topic or {}).get("label", "?")
-        if per_topic.get(tkey, 0) >= max_per_topic:
-            continue
-        per_topic[tkey] = per_topic.get(tkey, 0) + 1
-        chosen.append(it)
-        if len(chosen) >= limit:
-            break
+
+    def cap(topic: dict[str, Any] | None) -> int:
+        if not topic:
+            return max_per_topic
+        return max(max_per_topic, round((topic.get("end", 0) - topic.get("start", 0)) / TOPIC_SECONDS))
+
+    ordered = sorted(items, key=lambda x: -(x["content"] + OPENER_BIAS * x.get("scores", {}).get("hook", 50)))
+    # pass 1 spreads over distinct stretches; pass 2 fills any slots left (a short source) with the
+    # best overlapping variants under IoU only, which also gives a critic alternative starts
+    for strict in (True, False):
+        for it in ordered:
+            if len(chosen) >= limit:
+                return chosen
+            if any(it is c for c in chosen):
+                continue
+            span = (it["window"].start, it["window"].end)
+            if any(max(_iou(span, (c["window"].start, c["window"].end)),
+                       _containment(span, (c["window"].start, c["window"].end)) if strict else 0.0) > max_iou
+                   for c in chosen):
+                continue
+            tkey = (it["window"].topic or {}).get("label", "?")
+            if per_topic.get(tkey, 0) >= cap(it["window"].topic):
+                continue
+            per_topic[tkey] = per_topic.get(tkey, 0) + 1
+            chosen.append(it)
     return chosen
 
 
@@ -166,6 +236,7 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
     silence = [{"start": a, "end": b} for a, b in quiet] if quiet is not None else []
     faces = rows["faces"].data.get("timeline") if "faces" in rows else None
     loud = rows["loudness"].data if "loudness" in rows else None
+    speakers_uncertain = bool(rows["speakers"].data.get("uncertain")) if "speakers" in rows else False
     min_d, max_d = (camp.min_duration, camp.max_duration) if camp else (15.0, 60.0)
     windows = scout_windows(source_id, segments, topics, min_d, max_d)
     ads = ad_regions(segments)
@@ -179,8 +250,14 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
     weights = campaigns.normalized_weights(camp.weights if camp else None)
     cdict = _campaign_dict(camp)
     items = []
-    for w in windows:
-        f = extract(w, silence, activity, faces, scenes, topics, df, len(segments), loudness=loud)
+    active_floor = float(np.percentile(activity, 60)) if activity else None
+    feats = [extract(w, silence, activity, faces, scenes, topics, df, len(segments), loudness=loud,
+                     active_floor=active_floor) for w in windows]
+    rates = [f["wpm"] for f in feats if f.get("wpm")]
+    source_wpm = float(np.median(rates)) if rates else None
+    for w, f in zip(windows, feats):
+        if source_wpm:
+            f["source_wpm"] = round(source_wpm, 1)
         in_ad = sum(max(0.0, min(w.end, b) - max(w.start, a)) for a, b in ads) / max(1e-6, w.end - w.start)
         if in_ad > 0.3:          # mostly inside a sponsor segment, even if the window's own words are few
             f["ad_read"] = max(int(f.get("ad_read", 0)), 2)
@@ -202,7 +279,7 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
         w, f = it["window"], it["features"]
         start, end = snap(words, w.start, w.end, src.duration)
         comp = compliance.evaluate(camp, "candidate", duration=end - start, transcript=w.text, source=src,
-                                   speakers=f["speakers"])
+                                   speakers=f["speakers"], speakers_uncertain=speakers_uncertain)
         first = w.segments[0].text
         with db.session() as s:
             cand = Candidate(
@@ -259,7 +336,9 @@ def _evaluate_span(source_id: int, camp: Campaign | None, start: float, end: flo
     scores, why = heuristic.score(f, _campaign_dict(camp))
     weights = campaigns.normalized_weights(camp.weights if camp else None)
     comp = compliance.evaluate(camp, "candidate", duration=e0 - s0, transcript=win.text, source=src,
-                               speakers=f["speakers"])
+                               speakers=f["speakers"],
+                               speakers_uncertain=bool(rows["speakers"].data.get("uncertain")) if "speakers" in rows
+                               else False)
     return {"start": s0, "end": e0, "inside": inside, "win": win, "f": f, "scores": scores, "why": why,
             "content": heuristic.content_score(scores, weights), "comp": comp}
 
@@ -562,19 +641,24 @@ def rank(source_id: int | None = None, campaign: str | int | None = None, candid
 
     # pass 2: in final-score order, a later cut of an already-kept story is a duplicate. Overlap is
     # measured against the shorter clip, so a 16 s cut inside a 34 s one counts even at low IoU.
-    kept: list[tuple[float, float]] = []
+    kept: list[tuple[tuple[float, float], str]] = []
     for item in sorted(scored, key=lambda x: -x["base"]):
         c, camp, crit, final = item["c"], item["camp"], item["crit"], item["final"]
         scorer, conf, content, prior_score = item["scorer"], item["conf"], item["content"], item["prior"]
         explanations = item["explanations"]
         span = (c.start, c.end)
-        dup = any(_containment(span, k) > 0.5 for k in kept)
+        dup = any(_containment(span, k) > 0.5 for k, _t in kept)
+        same_story = None if dup else next(
+            (k for k, t in kept if story_similarity(c.transcript or "", t) >= (0.35 if abs(k[0] - c.start) < 300
+                                                                               else 0.45)), None)
+        dup = dup or same_story is not None
         penalty = item["ad_penalty"] + (15.0 if dup else 0.0)
         if c.compliance_status != "FAIL" and not dup:
-            kept.append(span)
+            kept.append((span, c.transcript or ""))
         rank_score = round(item["base"] - (15.0 if dup else 0.0), 2)
         if dup:
-            explanations["diversity"] = "overlaps a higher-ranked candidate (same story)"
+            explanations["diversity"] = ("tells the same story as a higher-ranked candidate" if same_story
+                                         else "overlaps a higher-ranked candidate (same story)")
         comp: dict[str, Any] = {"status": c.compliance_status, "reasons": c.compliance_reasons}
         if crit and crit.get("rule_checks"):
             verdicts = {str(r["rule_id"]): r for r in crit["rule_checks"]}

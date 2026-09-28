@@ -97,6 +97,8 @@ def _check(rule: CampaignRule, stage: str, ev: dict[str, Any]) -> RuleResult | N
         unknown = [n for n in named if n not in allowed]
         if not present:
             return res("review", "no speaker labels; confirm only allowed speakers appear")
+        if ev.get("speakers_uncertain"):
+            return res("review", "speaker labels are uncertain (voices weakly separated); confirm by watching")
         return res("violation", f"speakers not confirmed as allowed: {', '.join(unknown)}") if unknown else \
             res("pass", "allowed speakers only")
     if k in ("forbidden_topic", "freeform"):

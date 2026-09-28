@@ -24,6 +24,8 @@ import subprocess
 import tempfile
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -210,8 +212,28 @@ PROVIDERS: dict[str, type[LLMProvider]] = {
 }
 
 
+AGENTS = {"claude": "claude-cli", "codex": "codex-cli", "local": "openai-compatible", "none": "heuristic"}
+_override: str | None = None
+
+
+@contextmanager
+def using(provider: str | None) -> Iterator[None]:
+    """Use this provider for model calls inside the block (e.g. `ezra run --agent claude`) without
+    changing the configured default. Accepts agent names (claude, codex, local, none) or providers."""
+    global _override
+    previous = _override
+    _override = AGENTS.get(provider, provider) if provider else previous
+    if _override is not None and _override not in PROVIDERS:
+        _override = previous
+        raise ValueError(f"unknown agent/provider {provider!r}; use one of {sorted(AGENTS) + sorted(PROVIDERS)}")
+    try:
+        yield
+    finally:
+        _override = previous
+
+
 def get_llm(name: str | None = None) -> LLMProvider:
-    name = name or get_settings().llm
+    name = name or _override or get_settings().llm
     if name not in PROVIDERS:
         raise ValueError(f"unknown LLM provider {name!r}; available: {sorted(PROVIDERS)}")
     return PROVIDERS[name]()

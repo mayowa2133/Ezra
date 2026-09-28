@@ -127,7 +127,7 @@ def run_campaign(ctx: JobContext) -> dict[str, Any]:
 
     return runner.run_campaign(ctx.payload["campaign"], int(ctx.payload.get("render_top", 5)),
                                int(ctx.payload.get("max_candidates", 40)), bool(ctx.payload.get("autonomous")),
-                               ctx.payload.get("spec"), progress=ctx.progress)
+                               ctx.payload.get("spec"), progress=ctx.progress, agent=ctx.payload.get("agent"))
 
 
 @task("live_session")

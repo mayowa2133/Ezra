@@ -115,9 +115,13 @@ def score(f: dict[str, Any], campaign: dict[str, Any] | None = None) -> tuple[di
         r -= min(25, 150 * (f["dead_air_ratio"] - 0.08))
         notes.append(f"{f['dead_air_ratio']:.0%} dead air")
     wpm = f["wpm"]
-    if wpm and (wpm < 120 or wpm > 240):
+    # pace is judged against the source's own typical rate when known: a fast talker's normal
+    # speed is not a flaw, a stretch much slower or faster than their normal is
+    lo, hi = (0.7 * f["source_wpm"], 1.3 * f["source_wpm"]) if f.get("source_wpm") else (120, 240)
+    if wpm and (wpm < lo or wpm > hi):
         r -= 8
-        notes.append(f"pace {wpm:.0f} wpm")
+        notes.append(f"pace {wpm:.0f} wpm" + (f" (source typical {f['source_wpm']:.0f})" if f.get("source_wpm")
+                                               else ""))
     if f["topics_spanned"] > 1:
         # one idea per short: each extra subject is a place viewers swipe away
         r -= 10 * (f["topics_spanned"] - 1)
