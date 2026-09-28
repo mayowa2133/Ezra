@@ -206,7 +206,8 @@ async def _mcp_flow(home: str) -> None:
                     "ezra_earnings_report", "ezra_optimize_campaign", "ezra_run_campaign",
                     "ezra_list_accounts", "ezra_account_health", "ezra_youtube_test_upload", "ezra_get_post",
                     "ezra_refresh_posts", "ezra_retry_post", "ezra_cancel_post", "ezra_reschedule_post",
-                    "ezra_update_post", "ezra_delete_post"}
+                    "ezra_update_post", "ezra_delete_post", "ezra_sync_youtube_analytics",
+                    "ezra_performance_report"}
         assert required <= names, required - names
         call = lambda n, **kw: s.call_tool(n, kw)
         cands = data(await call("ezra_list_candidates", campaign="demo", top=3))

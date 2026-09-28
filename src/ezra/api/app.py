@@ -284,6 +284,12 @@ def campaign_insights(ref: str) -> dict[str, Any]:
     return perf.insights(campaigns.get(ref).id)
 
 
+@app.get("/api/performance", dependencies=[Auth])
+def performance(campaign: str | None = None) -> dict[str, Any]:
+    """Per-outcome comparisons and plain statements with N and confidence (observational)."""
+    return perf.performance_report(campaigns.get(campaign).id if campaign else None)
+
+
 @app.post("/api/campaigns/{ref}/optimize", dependencies=[Auth])
 def optimize(ref: str, apply: bool = False) -> dict[str, Any]:
     return runner.optimize(ref, apply)

@@ -18,11 +18,14 @@ from . import db
 from .db.models import MetricSnapshot, Post, PublishAccount, utcnow
 
 FIELDS = ("views", "likes", "comments", "shares", "saves", "impressions", "avg_watch_seconds",
-          "completion_rate", "followers_gained")
+          "completion_rate", "followers_gained", "watch_minutes", "avg_view_pct", "subscribers_lost")
+# windowed, lagging reports: used for learning, never for counting views toward earnings
+LAGGING_PROVIDERS = ("youtube-analytics",)
 
 
 def record(post_id: int, provider: str = "manual", captured_at: datetime | None = None,
-           raw: dict[str, Any] | None = None, **values: Any) -> MetricSnapshot:
+           raw: dict[str, Any] | None = None, window_start: datetime | None = None,
+           window_end: datetime | None = None, **values: Any) -> MetricSnapshot:
     unknown = set(values) - set(FIELDS)
     if unknown:
         raise ValueError(f"unknown metrics {sorted(unknown)}; allowed {FIELDS}")
@@ -30,6 +33,7 @@ def record(post_id: int, provider: str = "manual", captured_at: datetime | None 
         if s.get(Post, post_id) is None:
             raise LookupError(f"no post {post_id}")
         snap = MetricSnapshot(post_id=post_id, provider=provider, captured_at=captured_at or utcnow(), raw=raw or {},
+                              window_start=window_start, window_end=window_end,
                               **{k: v for k, v in values.items() if v is not None})
         s.add(snap)
         s.flush()
@@ -63,9 +67,14 @@ def sync(campaign_id: int | None = None) -> dict[str, Any]:
             skipped += 1
             continue
         record(p.id, provider=f"{acc.provider}-api", raw=m.raw,
-               **{k: getattr(m, k) for k in FIELDS if getattr(m, k) is not None})
+               **{k: getattr(m, k) for k in FIELDS if getattr(m, k, None) is not None})
         stored += 1
-    return {"snapshots": stored, "skipped": skipped, "errors": errors}
+    out: dict[str, Any] = {"snapshots": stored, "skipped": skipped, "errors": errors}
+    if any(a.provider == "youtube" and a.credential_ref for a in accounts.values()):
+        from .publishing import youtube_analytics
+
+        out["youtube_analytics"] = youtube_analytics.sync(campaign_id)
+    return out
 
 
 def import_csv(text: str, provider: str = "csv") -> dict[str, Any]:
@@ -79,13 +88,14 @@ def import_csv(text: str, provider: str = "csv") -> dict[str, Any]:
         if post_id is None:
             missing.append(i)
             continue
-        vals = {}
+        vals: dict[str, Any] = {}
         for k in FIELDS:
             v = (row.get(k) or "").replace(",", "").strip()
             if v:
-                vals[k] = float(v) if k in ("avg_watch_seconds", "completion_rate") else int(float(v))
+                vals[k] = float(v) if k in ("avg_watch_seconds", "completion_rate", "watch_minutes",
+                                            "avg_view_pct") else int(float(v))
         when = datetime.fromisoformat(row["captured_at"]) if row.get("captured_at") else None
-        record(post_id, provider, when, None, **vals)
+        record(post_id, provider=provider, captured_at=when, **vals)
         stored += 1
     return {"snapshots": stored, "rows_without_post": missing}
 
@@ -104,11 +114,17 @@ def views_at(post: Post, hours: float) -> int | None:
     with db.session() as s:
         snap = s.scalar(select(MetricSnapshot).where(MetricSnapshot.post_id == post.id,
                                                      MetricSnapshot.captured_at <= cutoff,
-                                                     MetricSnapshot.views.is_not(None))
+                                                     MetricSnapshot.views.is_not(None),
+                                                     MetricSnapshot.provider.not_in(LAGGING_PROVIDERS))
                         .order_by(MetricSnapshot.captured_at.desc()).limit(1))
     return snap.views if snap else None
 
 
 def snapshot_dict(x: MetricSnapshot) -> dict[str, Any]:
-    return {"id": x.id, "post_id": x.post_id, "captured_at": db.aware(x.captured_at).isoformat(),  # type: ignore[union-attr]
-            "provider": x.provider, **{k: getattr(x, k) for k in FIELDS}}
+    def iso(d: datetime | None) -> str | None:
+        a = db.aware(d)
+        return a.isoformat() if a else None
+
+    return {"id": x.id, "post_id": x.post_id, "captured_at": iso(x.captured_at), "provider": x.provider,
+            "window_start": iso(x.window_start), "window_end": iso(x.window_end),
+            **{k: getattr(x, k) for k in FIELDS}}

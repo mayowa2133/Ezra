@@ -49,7 +49,10 @@ def payout(views: int, c: Campaign, platform: str | None = None) -> dict[str, An
 def counted_views(post: Post, c: Campaign) -> tuple[int, Any]:
     """Views from the latest snapshot inside the tracking window."""
     with db.session() as s:
-        q = select(MetricSnapshot).where(MetricSnapshot.post_id == post.id, MetricSnapshot.views.is_not(None))
+        from .metrics import LAGGING_PROVIDERS
+
+        q = select(MetricSnapshot).where(MetricSnapshot.post_id == post.id, MetricSnapshot.views.is_not(None),
+                                         MetricSnapshot.provider.not_in(LAGGING_PROVIDERS))
         if c.tracking_window_days and post.published_at:
             q = q.where(MetricSnapshot.captured_at <= post.published_at + timedelta(days=c.tracking_window_days))
         snap = s.scalar(q.order_by(MetricSnapshot.captured_at.desc(), MetricSnapshot.id.desc()).limit(1))

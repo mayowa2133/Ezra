@@ -10,6 +10,10 @@ Methods are deliberately simple and honest about uncertainty:
   prior        a candidate's expected log-views from its traits' shrunken
                cohort effects, as a smooth 0-100 score (50 = typical) with a confidence that
                grows with data. Used by the PerformanceCritic.
+  outcomes     the same cohort method on retention and engagement where the platform reports
+               them (YouTube Analytics: average view %, view duration, watch time, subscribers),
+               plus qualified earnings; compared as plain statements with N and a confidence
+               level. Observational: a difference is a lead to test, not proof of cause.
 """
 
 from __future__ import annotations
@@ -23,11 +27,25 @@ import numpy as np
 from sqlalchemy import select
 
 from . import db
-from .db.models import Learning, MetricSnapshot, Post
+from .db.models import Campaign, Learning, MetricSnapshot, Post
 
 K = 5.0            # shrinkage pseudo-count
 TRAITS = ("hook_type", "duration_bucket", "layout", "caption_theme", "platform", "opening", "topic",
-          "posting_hour_bucket", "weekday", "speaker", "has_cta", "silence_removed")
+          "posting_hour_bucket", "weekday", "speaker", "has_cta", "silence_removed", "creator",
+          "caption_emoji", "face_coverage", "scene_pace", "title_style", "campaign_id",
+          "source_captions_hidden")
+# outcome: (label, scale). "log" outcomes are compared as multipliers, "linear" ones as differences.
+OUTCOMES: dict[str, tuple[str, str]] = {
+    "views": ("views", "log"),
+    "avg_view_pct": ("average view percentage", "linear"),
+    "avg_watch_seconds": ("average view duration (s)", "linear"),
+    "engagement_rate": ("engagement", "linear"),
+    "subscribers_net": ("net subscribers", "linear"),
+    "qualified_earnings": ("qualified earnings", "log"),
+}
+LAGGING = ("youtube-analytics",)
+UNITS = {"avg_view_pct": "{:.0f}%", "avg_watch_seconds": "{:.1f}s", "engagement_rate": "{:.1f} per 100 views",
+         "subscribers_net": "{:+.1f} subscribers", "views": "{:,.0f} views", "qualified_earnings": "${:,.2f}"}
 NUMERIC = ("rank_score", "hook", "retention", "context", "emotion", "novelty", "discussion", "payoff",
            "visual", "duration")
 
@@ -38,6 +56,14 @@ def duration_bucket(d: float) -> str:
 
 def hour_bucket(h: int) -> str:
     return "night" if h < 6 else "morning" if h < 12 else "afternoon" if h < 18 else "evening"
+
+
+def face_bucket(rate: float) -> str:
+    return "faces <40%" if rate < 0.4 else "faces 40-70%" if rate < 0.7 else "faces 70%+"
+
+
+def pace_bucket(cuts_per_min: float) -> str:
+    return "slow (<10 cuts/min)" if cuts_per_min < 10 else "medium (10-25)" if cuts_per_min < 25 else "fast (25+)"
 
 
 def observations(campaign_id: int | None = None, include_private: bool = False) -> list[dict[str, Any]]:
@@ -52,15 +78,44 @@ def observations(campaign_id: int | None = None, include_private: bool = False) 
         posts = list(s.scalars(q.order_by(Post.id)))
         out = []
         for p in posts:
+            # live counts for views (lagging windowed reports can be lower); retention from the
+            # latest analytics report when the platform provides one
             snap = s.scalar(select(MetricSnapshot).where(MetricSnapshot.post_id == p.id,
-                                                         MetricSnapshot.views.is_not(None))
+                                                         MetricSnapshot.views.is_not(None),
+                                                         MetricSnapshot.provider.not_in(LAGGING))
                             .order_by(MetricSnapshot.captured_at.desc(), MetricSnapshot.id.desc()).limit(1))
+            report = s.scalar(select(MetricSnapshot).where(MetricSnapshot.post_id == p.id,
+                                                           MetricSnapshot.provider.in_(LAGGING))
+                              .order_by(MetricSnapshot.captured_at.desc(), MetricSnapshot.id.desc()).limit(1))
+            snap = snap or report
             if snap is None:
                 continue
             f = dict(p.features or {})
             f.update(post_id=p.id, clip_id=p.clip_id, platform=p.platform, views=snap.views,
                      likes=snap.likes, comments=snap.comments, shares=snap.shares, saves=snap.saves,
-                     metrics_provider=snap.provider, experiment_variant=p.experiment_variant)
+                     metrics_provider=snap.provider, experiment_variant=p.experiment_variant,
+                     campaign_id=p.campaign_id)
+            if report is not None:
+                f.update(avg_view_pct=report.avg_view_pct, avg_watch_seconds=report.avg_watch_seconds,
+                         watch_minutes=report.watch_minutes,
+                         subscribers_net=None if report.followers_gained is None else
+                         report.followers_gained - (report.subscribers_lost or 0))
+                if f.get("shares") is None:
+                    f["shares"] = report.shares
+            if f.get("views"):
+                eng = [f.get(k) for k in ("likes", "comments", "shares")]
+                if any(e is not None for e in eng):
+                    f["engagement_rate"] = round(100 * sum(e or 0 for e in eng) / f["views"], 3)
+            if p.campaign_id is not None:
+                from . import economics
+
+                camp = s.get(Campaign, p.campaign_id)
+                if camp is not None and f.get("views") is not None:
+                    f["qualified_earnings"] = economics.payout(int(f["views"]), camp, p.platform)["estimated"]
+            if f.get("face_rate") is not None:
+                f["face_coverage"] = face_bucket(float(f["face_rate"]))
+            if f.get("scene_cuts_per_min") is not None:
+                f["scene_pace"] = pace_bucket(float(f["scene_cuts_per_min"]))
             if "duration" in f:
                 f["duration_bucket"] = duration_bucket(float(f["duration"]))
             if p.published_at:
@@ -103,6 +158,105 @@ def cohorts(obs: list[dict[str, Any]], min_n: int = 2) -> list[dict[str, Any]]:
                          "interval80": [round(math.exp(m - 1.28 * sd - overall), 2),
                                         round(math.exp(m + 1.28 * sd - overall), 2)]})
     return sorted(rows, key=lambda r: -abs(math.log(r["shrunk_multiplier"])))
+
+
+def _value(o: dict[str, Any], outcome: str) -> float | None:
+    v = o.get(outcome)
+    if v is None:
+        return None
+    return math.log(float(v) + 1) if OUTCOMES[outcome][1] == "log" else float(v)
+
+
+def confidence(n: int, lo: float, hi: float) -> str:
+    """How much to trust a difference: the interval must exclude zero, and more data raises it."""
+    if lo <= 0 <= hi or n < 8:
+        return "low"
+    return "high" if n >= 30 else "moderate"
+
+
+def comparisons(obs: list[dict[str, Any]], outcome: str = "views", min_n: int = 3) -> list[dict[str, Any]]:
+    """For each trait, the best and worst values on one outcome, with shrunken means, the 80%
+    interval of their difference, N and a confidence level."""
+    label, scale = OUTCOMES[outcome]
+    pairs: list[tuple[dict[str, Any], float]] = []
+    for o in obs:
+        v = _value(o, outcome)
+        if v is not None:
+            pairs.append((o, v))
+    if len(pairs) < 2 * min_n:
+        return []
+    vals = [v for _, v in pairs]
+    overall, var = mean(vals), float(np.var(vals)) or 1.0
+    out = []
+    for trait in TRAITS:
+        groups: dict[str, list[float]] = defaultdict(list)
+        for o, v in pairs:
+            t = o.get(trait)
+            if t is not None and t != "":
+                groups[str(t)].append(v)
+        groups = {k: g for k, g in groups.items() if len(g) >= min_n}
+        if len(groups) < 2:
+            continue
+        shrunk = {k: _shrunk(g, overall, var) for k, g in groups.items()}
+        best = max(shrunk, key=lambda k: shrunk[k][0])
+        worst = min(shrunk, key=lambda k: shrunk[k][0])
+        (mb, sb), (mw, sw) = shrunk[best], shrunk[worst]
+        diff, sd = mb - mw, math.sqrt(sb ** 2 + sw ** 2)
+        lo, hi = diff - 1.28 * sd, diff + 1.28 * sd
+        n = len(groups[best]) + len(groups[worst])
+
+        def show(m: float) -> float:
+            return round(math.exp(m) - 1, 2) if scale == "log" else round(m, 2)
+
+        out.append({"outcome": outcome, "label": label, "trait": trait, "better": best, "worse": worst,
+                    "better_mean": show(mb), "worse_mean": show(mw), "n": n,
+                    "n_better": len(groups[best]), "n_worse": len(groups[worst]),
+                    "effect": round(math.exp(diff), 2) if scale == "log" else round(diff, 2),
+                    "effect_kind": "multiplier" if scale == "log" else "difference",
+                    "interval80": [round(math.exp(lo), 2), round(math.exp(hi), 2)] if scale == "log"
+                    else [round(lo, 2), round(hi, 2)],
+                    "confidence": confidence(n, lo, hi)})
+    rank = {"high": 0, "moderate": 1, "low": 2}
+    return sorted(out, key=lambda r: (rank[r["confidence"]], -abs(math.log(r["effect"]) if r["effect_kind"] ==
+                                                                  "multiplier" else r["effect"] / (var ** 0.5))))
+
+
+def statement(c: dict[str, Any]) -> str:
+    """One comparison in plain words. Observational wording on purpose."""
+    trait = c["trait"].replace("_", " ")
+    unit = UNITS.get(c["outcome"], "{}")
+    if c["effect_kind"] == "multiplier":
+        what = f"about {c['effect']}x"
+    else:
+        what = f"{unit.format(c['better_mean'])} vs {unit.format(c['worse_mean'])}"
+    lead = {"high": "", "moderate": "", "low": "Tentatively, "}[c["confidence"]]
+    tail = {"high": f"confidence is high (N={c['n']})",
+            "moderate": f"but confidence is moderate because N={c['n']}",
+            "low": f"but confidence is low (N={c['n']}, the interval includes no difference); don't act on it yet"
+            }[c["confidence"]]
+    return (f"{lead}{trait} = {c['better']} currently outperforms {c['worse']} on {c['label']} ({what}), {tail}. "
+            f"This is observational, not proof of cause.").replace(" ,", ",")
+
+
+def performance_report(campaign_id: int | None = None, min_n: int = 3) -> dict[str, Any]:
+    """Every outcome the data supports, with comparisons, statements and rank calibration."""
+    obs = observations(campaign_id)
+    out: dict[str, Any] = {"n_posts": len(obs), "outcomes": {}, "statements": []}
+    for outcome in OUTCOMES:
+        have = [o for o in obs if o.get(outcome) is not None]
+        if not have:
+            continue
+        comps = comparisons(have, outcome, min_n)
+        scored = [(o["rank_score"], float(o[outcome])) for o in have if o.get("rank_score") is not None]
+        out["outcomes"][outcome] = {
+            "n": len(have), "median": round(float(np.median([float(o[outcome]) for o in have])), 2),
+            "comparisons": comps,
+            "rank_correlation": spearman([a for a, _ in scored], [b for _, b in scored])}
+        out["statements"] += [statement(c) for c in comps if c["confidence"] != "low"][:3]
+    if not out["statements"]:
+        out["statements"].append(f"With {len(obs)} posts no trait clearly separates on any outcome yet; keep "
+                                 "posting variety or run an experiment before drawing conclusions.")
+    return out
 
 
 def spearman(xs: list[float], ys: list[float]) -> float | None:

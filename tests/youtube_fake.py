@@ -47,6 +47,8 @@ class FakeYouTube:
         self.api_401_once = False
         self.privacy_override: str | None = None  # e.g. "private": what an unaudited project gets
         self.revoke_calls = 0
+        self.analytics: dict[str, dict[str, Any]] = {}   # video id -> metrics row
+        self.analytics_requests: list[dict[str, list[str]]] = []
         self._ids = itertools.count(1)
         self._data_puts = 0
 
@@ -73,6 +75,8 @@ class FakeYouTube:
         if self.api_401_once and "youtube/v3/videos" in url and r.method == "GET":
             self.api_401_once = False
             return gerr(401, "authError", "Invalid Credentials")
+        if "youtubeanalytics.googleapis.com/v2/reports" in url:
+            return self._analytics(r)
         if "upload/youtube/v3/videos" in url and r.method == "POST":
             return self._init(r)
         if "upload/youtube/v3/thumbnails/set" in url:
@@ -147,6 +151,20 @@ class FakeYouTube:
     def _incomplete(sess: dict[str, Any]) -> httpx.Response:
         headers = {"Range": f"bytes=0-{sess['received'] - 1}"} if sess["received"] else {}
         return httpx.Response(308, headers=headers)
+
+    def _analytics(self, r: httpx.Request) -> httpx.Response:
+        q = parse_qs(urlparse(str(r.url)).query)
+        self.analytics_requests.append(q)
+        if "https://www.googleapis.com/auth/yt-analytics.readonly" not in self.scope:
+            return gerr(403, "insufficientPermissions", "Request had insufficient authentication scopes.")
+        metrics = q["metrics"][0].split(",")
+        ids = q["filters"][0].removeprefix("video==").split(",")
+        # columns in the order the report declares, dimension first (as the API does)
+        headers = [{"name": "video", "columnType": "DIMENSION", "dataType": "STRING"}] + [
+            {"name": m, "columnType": "METRIC", "dataType": "INTEGER"} for m in metrics]
+        rows = [[vid] + [self.analytics[vid].get(m, 0) for m in metrics] for vid in ids if vid in self.analytics]
+        return httpx.Response(200, json={"kind": "youtubeAnalytics#resultTable", "columnHeaders": headers,
+                                         "rows": rows})
 
     def _thumbnail(self, r: httpx.Request) -> httpx.Response:
         if self.thumbnail_error is not None:

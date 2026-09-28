@@ -182,7 +182,32 @@ def _features(clip: Clip, platform: str, when: datetime) -> dict[str, Any]:
         "silence_removed": bool((v.edit_summary or {}).get("removed_seconds")) if v else False,
         "punch_in": spec.get("punch_in"), "variant": spec.get("variant"), "platform": platform,
         "posting_hour": when.hour, "weekday": when.strftime("%a"),
+        "caption_emoji": bool(spec.get("caption_emoji")), "creator": _creator(clip.campaign_id),
+        "face_rate": (cand.features or {}).get("face_rate"),
+        "scene_cuts_per_min": _per_min((cand.features or {}).get("scene_cuts"), cand.end - cand.start),
+        "title_style": title_style(clip.title or cand.title or ""),
+        "source_captions_hidden": bool((v.edit_summary or {}).get("source_captions")) if v else False,
     }
+
+
+def _creator(campaign_id: int | None) -> str | None:
+    return campaigns.get(campaign_id).creator if campaign_id else None
+
+
+def _per_min(n: Any, seconds: float) -> float | None:
+    return round(float(n) * 60 / seconds, 1) if n is not None and seconds > 0 else None
+
+
+def title_style(title: str) -> str:
+    """Coarse shape of a title, for learning which kinds work: question, quote, number, statement."""
+    t = title.strip()
+    if t.endswith("?"):
+        return "question"
+    if t[:1] in "\"'“" or '"' in t or "“" in t:
+        return "quote"
+    if any(ch.isdigit() for ch in t[:25]) or "$" in t:
+        return "number"
+    return "statement"
 
 
 def publish_clip(clip_id: int, platforms: list[str] | None = None, account_ids: dict[str, int] | None = None,

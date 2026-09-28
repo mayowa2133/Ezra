@@ -360,6 +360,24 @@ def ezra_sync_metrics(campaign: str | None = None) -> dict[str, Any]:
 
 
 @server.tool()
+def ezra_sync_youtube_analytics(campaign: str | None = None) -> dict[str, Any]:
+    """Pull YouTube Analytics for uploaded YouTube posts: views, likes, comments, shares, watch
+    minutes, average view duration and percentage, subscribers gained/lost. Stored as windowed
+    snapshots; impressions/CTR aren't available from this API and are never invented."""
+    from .publishing import youtube_analytics
+
+    return youtube_analytics.sync(campaigns.get(campaign).id if campaign else None)
+
+
+@server.tool()
+def ezra_performance_report(campaign: str | None = None) -> dict[str, Any]:
+    """What performs, per outcome (views, average view %, view duration, engagement, subscribers,
+    qualified earnings): trait comparisons with N, 80% intervals and a confidence level, plus plain
+    statements. Observational; say so when relaying it, and don't overstate low-confidence results."""
+    return perf.performance_report(campaigns.get(campaign).id if campaign else None)
+
+
+@server.tool()
 def ezra_record_metrics(post_id: int, views: int, likes: int | None = None, comments: int | None = None,
                         shares: int | None = None, saves: int | None = None) -> dict[str, Any]:
     """Manual snapshot (numbers read off a dashboard); provenance 'manual'."""

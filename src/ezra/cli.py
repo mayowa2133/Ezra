@@ -650,6 +650,37 @@ def metrics_sync(campaign: str | None = typer.Option(None, "--campaign", "-c")) 
     out = run_job("sync_metrics", {"campaign_id": cid}, label="sync metrics")
     console.print(f"{out['snapshots']} snapshots stored, {out['skipped']} skipped"
                   + "".join(f"\n  [red]post {e['post_id']}: {e['error']}[/]" for e in out["errors"]))
+    ya = out.get("youtube_analytics")
+    if ya:
+        console.print(f"YouTube Analytics: {ya['snapshots']} reports stored, {len(ya['skipped'])} skipped"
+                      + "".join(f"\n  [red]account {e['account_id']}: {e['error']}[/]" for e in ya["errors"]))
+
+
+@metrics_app.command("youtube-analytics")
+def metrics_youtube_analytics(campaign: str | None = typer.Option(None, "--campaign", "-c")) -> None:
+    """Pull YouTube Analytics (watch time, average view %, subscribers) for uploaded YouTube posts."""
+    from .publishing import youtube_analytics
+
+    cid = campaigns.get(campaign).id if campaign else None
+    console.print_json(data=youtube_analytics.sync(cid))
+
+
+@app.command()
+def performance(campaign: str | None = typer.Option(None, "--campaign", "-c"), json_out: bool = False) -> None:
+    """What the published record says, per outcome (views, average view %, watch time, engagement,
+    subscribers, earnings), with N and a confidence level. Observational, not proof of cause."""
+    cid = campaigns.get(campaign).id if campaign else None
+    rep = perf.performance_report(cid)
+    if json_out:
+        console.print_json(json.dumps(rep, default=str))
+        return
+    console.print(f"{rep['n_posts']} posts with metrics")
+    for name, o in rep["outcomes"].items():
+        rho = o["rank_correlation"]
+        console.print(f"  {name}: n={o['n']} median={o['median']}"
+                      + (f"  rank↔outcome ρ={rho}" if rho is not None else ""))
+    for s in rep["statements"]:
+        console.print(f"• {s}")
 
 
 @metrics_app.command("add")
