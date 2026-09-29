@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..transcription.base import Word
+from ..transcription.base import Word, in_span
 
 FILLERS = {"um", "uh", "erm", "er", "uhm", "hmm", "mm", "ah"}
 KEEP_PAUSE = 0.18     # silence kept where a long pause is shortened (reads as a cut, not a jump)
@@ -102,7 +102,7 @@ def remap_words(words: list[Word], pieces: list[Piece]) -> list[Word]:
     """Words that survive the edit, with output-timeline timestamps."""
     out = []
     for w in words:
-        if is_filler(w.w):
+        if is_filler(w.w) or not any(in_span(w, p.src_start, p.src_end) for p in pieces):
             continue
         s = map_time(pieces, w.s)
         e = map_time(pieces, w.e)

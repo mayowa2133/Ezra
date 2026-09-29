@@ -48,6 +48,26 @@ def test_edl_removes_fillers_and_long_pauses_and_remaps():
     assert len(none) == 1 and s2["removed_seconds"] == 0
 
 
+def test_a_word_ending_at_the_cut_is_not_captioned():
+    from ezra.transcription.base import Word
+
+    # the clip starts on "my" (4063.32), exactly where "definitely" ends
+    ws = [Word("definitely", 4062.86, 4063.32), Word("I", 4063.2, 4063.2), Word("my", 4063.32, 4063.68),
+          Word("mean", 4063.7, 4063.7), Word("first", 4063.72, 4063.9), Word("Knicks", 4066.84, 4067.22)]
+    # "Knicks" has only 30 ms inside the clip: dropped too; with 200 ms inside, it's kept
+    out = edl.remap_words(ws, [edl.Piece(4063.32, 4066.87)])
+    assert [w.w for w in out] == ["my", "mean", "first"]    # zero-length ASR words count when inside
+    assert out[0].s == 0.0
+    out = edl.remap_words(ws, [edl.Piece(4063.32, 4067.04)])
+    assert [w.w for w in out] == ["my", "mean", "first", "Knicks"]
+    # a hand-picked span starting mid-segment only holds its own words
+    from ezra.scoring.features import Window
+    from ezra.transcription.base import Segment
+    win = Window(1, 4063.32, 4067.04, [Segment(4062.0, 4067.3, "", words=ws)])
+    assert win.text.split()[0] == "my" and "definitely" not in win.text
+
+
+
 def test_caption_chunks_themes_and_sidecars():
     ws = words_from("He lost four hundred thousand dollars overnight. Nobody warned him about it.")
     chunks = captions.chunk_words(ws, 3)

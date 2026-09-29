@@ -161,6 +161,17 @@ def window_text(words: list[Word], start: float, end: float) -> str:
     return join_words([w.w for w in window(words, start, end)])
 
 
+WORD_MIN_KEPT = 0.05   # a word with less than this inside a span isn't in it (e.g. one ending at the cut)
+
+
+def in_span(w: Word, start: float, end: float) -> bool:
+    """Whether a word is in [start, end): at least WORD_MIN_KEPT of it (all of a shorter word) inside.
+    ASR also emits zero-length words; those count when they sit inside."""
+    if w.e <= w.s:
+        return start <= w.s < end
+    return min(w.e, end) - max(w.s, start) >= min(WORD_MIN_KEPT, w.e - w.s)
+
+
 def snap(words: list[Word], start: float, end: float, duration: float | None = None) -> tuple[float, float]:
     """Move rough boundaries onto word edges, padded but never into the
     neighbouring word."""

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..analysis.text import NUMBER, emotion_signals, tokens
-from ..transcription.base import Segment, Word, ends_sentence, join_words
+from ..transcription.base import Segment, Word, ends_sentence, in_span, join_words
 
 CONNECTOR_START = {"so", "and", "but", "or", "because", "anyway", "also", "then", "plus", "which", "like"}
 # openings that lean on what came before: "You know, we...", "Oh yeah, for those...", "The reason I..."
@@ -100,7 +100,8 @@ class Window:
 
     @property
     def words(self) -> list[Word]:
-        return [w for s in self.segments for w in s.words]
+        # a hand-picked span can start or end mid-segment: only the words inside it
+        return [w for s in self.segments for w in s.words if in_span(w, self.start, self.end)]
 
     @property
     def text(self) -> str:

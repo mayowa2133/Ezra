@@ -30,7 +30,7 @@ import numpy as np
 from PIL import Image
 
 from ..analysis.faces import FaceDetector, Sampled, get_detector, sample_frames
-from ..transcription.base import Word
+from ..transcription.base import Word, in_span
 from . import captions as cap
 from . import edl, layout
 from .spec import RenderSpec
@@ -210,7 +210,7 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             media = src
             in_args = ["-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(src)]
             out_words = [Word(w.w, round(w.s - start, 3), round(w.e - start, 3), w.p, w.spk)
-                         for w in words if w.e > start and w.s < end and not edl.is_filler(w.w)]
+                         for w in words if in_span(w, start, end) and not edl.is_filler(w.w)]
             cuts = [c - start for c in scene_cuts_src if start < c < end]
         bleeps = [(a2, b2) for a, b in bleep_src
                   if (a2 := (edl.map_time(pieces, a) if edited else a - start)) is not None
