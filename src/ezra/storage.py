@@ -61,6 +61,26 @@ class Storage(ABC):
         return None
 
 
+def clone_or_copy(src: Path, dst: Path) -> str:
+    """Copy-on-write clone when the filesystem supports it (APFS on macOS, btrfs/XFS reflinks on
+    Linux): instant, and no extra disk space until one side changes, which matters for long
+    sources. Otherwise a normal copy. Either way the result is an independent file."""
+    import subprocess
+    import sys
+
+    args = (["/bin/cp", "-c", str(src), str(dst)] if sys.platform == "darwin"
+            else ["cp", "--reflink=always", str(src), str(dst)] if sys.platform.startswith("linux") else None)
+    if args is not None:
+        try:
+            if subprocess.run(args, capture_output=True).returncode == 0:
+                return "clone"
+        except OSError:
+            pass
+        dst.unlink(missing_ok=True)
+    shutil.copyfile(src, dst)
+    return "copy"
+
+
 class LocalStorage(Storage):
     name = "local"
 
@@ -79,7 +99,7 @@ class LocalStorage(Storage):
         dest.parent.mkdir(parents=True, exist_ok=True)
         if Path(path).resolve() != dest:
             tmp = dest.with_suffix(dest.suffix + ".part")
-            shutil.copyfile(path, tmp)
+            clone_or_copy(Path(path), tmp)
             tmp.replace(dest)
         return validate_key(key)
 

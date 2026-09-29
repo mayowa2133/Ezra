@@ -177,3 +177,16 @@ def test_concurrent_first_access_migrates_once():
     for t in threads:
         t.join()
     assert not errors, errors
+
+
+def test_local_storage_clones_or_copies_into_an_independent_file(tmp_path):
+    from ezra.storage import LocalStorage, clone_or_copy
+
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"original bytes" * 1000)
+    how = clone_or_copy(src, tmp_path / "out.mp4")
+    assert how in ("clone", "copy") and (tmp_path / "out.mp4").read_bytes() == src.read_bytes()
+    st = LocalStorage(tmp_path / "store")
+    key = st.put_file("sources/1/original.mp4", src)
+    src.write_bytes(b"changed")                               # the stored copy must not follow
+    assert st.local_path(key).read_bytes() == b"original bytes" * 1000
