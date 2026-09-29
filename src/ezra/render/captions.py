@@ -66,6 +66,11 @@ THEMES: dict[str, dict[str, Any]] = {
     "high-impact": {"weight": "heavy", "size": 104, "case": "upper", "fill": "#FFFFFF", "stroke": "#000000",
                     "stroke_w": 10, "active": "#FF3B30", "mode": "word", "anim": "pop", "words": 2,
                     "position": 0.62, "box": None, "shadow": False},
+    # narrated sports stories (storytelling/): one word at a time, heavy white caps with a soft
+    # shadow, no outline or box; colour only on the words passed as keywords, never the lexicon
+    "story": {"weight": "heavy", "size": 84, "case": "upper", "fill": "#FFFFFF", "stroke": None,
+              "stroke_w": 0, "active": None, "mode": "word", "anim": "none", "words": 1, "position": 0.66,
+              "box": None, "shadow": True, "lexicon": False},
 }
 ANIM_SECONDS = 0.14
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
@@ -179,8 +184,10 @@ def emoji_image(char: str, px: int) -> Image.Image | None:
     return None
 
 
-def is_keyword(word: str, extra: set[str]) -> bool:
+def is_keyword(word: str, extra: set[str], lexicon: bool = True) -> bool:
     w = word.lower().strip(" ,.!?;:\"'")
+    if not lexicon:
+        return w in extra
     return bool(NUMBER.search(word)) or w in EMPHASIS or w in extra
 
 
@@ -308,7 +315,7 @@ class CaptionRenderer:
                     color = act if i <= active else (dim or fill)
                 elif act is not None and i == active:
                     color = act
-                elif is_keyword(ch.words[i].w, self.keywords) and self.keyword_color:
+                elif is_keyword(ch.words[i].w, self.keywords, self.t.get("lexicon", True)) and self.keyword_color:
                     color = self.keyword_color
                 if self.t["anim"] == "pop" and i == active and phase:
                     grow = 1.0 + 0.16 * (5 - phase) / 4

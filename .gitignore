@@ -19,3 +19,6 @@ footage/
 # campaign-supplied brand assets
 assets/curious-mike/
 watermark-tests/
+
+# experimental storytelling work (downloaded footage, renders)
+artifacts/
