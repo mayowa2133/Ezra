@@ -189,6 +189,22 @@ def test_refine_boundaries_moves_cuts_to_the_quiet_gap():
     assert n == 0 and same[0].src_start == 9.95
 
 
+def test_refine_boundaries_searches_the_whole_gap_before_the_next_speaker():
+    from ezra.render import edl
+    from ezra.transcription.base import Word
+
+    # "...finish it." ends at 9.82; the other speaker's "Yeah" audibly starts at 9.95 although ASR says
+    # 10.1. snap pads the end to 10.1, inside "Yeah": the cut must come back to the pause, not stay there
+    words = [Word("I'm", 8.5, 8.9), Word("finish", 9.0, 9.5), Word("it.", 9.5, 9.8), Word("Yeah,", 10.1, 10.3)]
+    times = [round(8.0 + i * 0.005, 4) for i in range(600)]
+    loud = [(8.5, 9.82), (9.95, 10.3)]
+    energy = [1000.0 if any(a <= t <= b for a, b in loud) else 5.0 for t in times]
+    out, moved = edl.refine_boundaries([edl.Piece(8.3, 10.1)], words, times, energy)
+    assert moved >= 1
+    assert 9.82 < out[0].src_end < 9.95, out[0].src_end      # in the pause, as late as it's quiet
+    assert out[0].src_end > 9.9                              # keeps the natural tail, not the first quiet frame
+
+
 def test_split_tokens_become_whole_words():
     from ezra.transcription.base import Word, join_words, merge_split_tokens
 

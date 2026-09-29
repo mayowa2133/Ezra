@@ -134,12 +134,20 @@ def refine_boundaries(pieces: list[Piece], words: list[Word], times: list[float]
         return pieces, 0
     kept = [w for w in words if not is_filler(w.w)]
 
-    def quietest(lo: float, hi: float, target: float) -> float:
+    def quietest(lo: float, hi: float, target: float, gap: tuple[float, float] | None = None) -> float:
         idx = [i for i, t in enumerate(times) if lo <= t <= hi]
         if not idx:
             return target
         at = min(range(len(times)), key=lambda i: abs(times[i] - target))
         best = min(idx, key=lambda i: (energy[i], abs(times[i] - target)))
+        # snap pads a cut up to the neighbouring word's ASR edge (+/-100 ms), which can already be
+        # inside that word, with the real pause further than SEARCH away: when nothing within SEARCH
+        # is actually quiet (> 6 dB above the gap's quietest point), use the whole gap
+        gidx = [i for i, t in enumerate(times) if gap and gap[0] <= t <= gap[1]]
+        if gidx:
+            g = min(gidx, key=lambda i: (energy[i], abs(times[i] - target)))
+            if energy[best] > 4 * energy[g]:
+                best = g
         # only move for a real dip: stay put when the boundary is already quiet
         return times[best] if energy[best] < 0.5 * energy[at] else target
 
@@ -151,6 +159,7 @@ def refine_boundaries(pieces: list[Piece], words: list[Word], times: list[float]
         ceil = pieces[i + 1].src_start if i + 1 < len(pieces) else p.src_end + SEARCH
         lo_s, hi_s = max(p.src_start - SEARCH, floor), p.src_start + SEARCH
         lo_e, hi_e = p.src_end - SEARCH, min(p.src_end + SEARCH, ceil)
+        gap_s = gap_e = None
         if inside:
             hi_s = min(hi_s, inside[0].s)
             lo_e = max(lo_e, inside[-1].e)
@@ -160,8 +169,9 @@ def refine_boundaries(pieces: list[Piece], words: list[Word], times: list[float]
                 lo_s = max(lo_s, min(before[-1].e, p.src_start))
             if after:
                 hi_e = min(hi_e, max(after[0].s, p.src_end))
-        s = quietest(lo_s, hi_s, p.src_start) if lo_s < hi_s else p.src_start
-        e = quietest(lo_e, hi_e, p.src_end) if lo_e < hi_e else p.src_end
+            gap_s, gap_e = (lo_s, inside[0].s), (inside[-1].e, hi_e)
+        s = quietest(lo_s, hi_s, p.src_start, gap_s) if lo_s < hi_s else p.src_start
+        e = quietest(lo_e, hi_e, p.src_end, gap_e) if lo_e < hi_e else p.src_end
         if e - s < MIN_PIECE:
             s, e = p.src_start, p.src_end
         moved += (abs(s - p.src_start) > 1e-6) + (abs(e - p.src_end) > 1e-6)
