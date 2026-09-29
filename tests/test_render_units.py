@@ -68,6 +68,32 @@ def test_caption_chunks_themes_and_sidecars():
         captions.CaptionRenderer(ws, "nope", 1080, 1920, {})
 
 
+def test_pop_animation_never_closes_the_gap_between_words():
+    import numpy as np
+
+    def gaps(theme: str, t: float) -> list[int]:
+        # transparent column runs between the inked words of a one-line chunk
+        r = captions.CaptionRenderer(words_from("minutes to start", step=0.4), theme, 1080, 1920, {})
+        a = np.asarray(Image.frombytes("RGBA", (1080, r.band_h), r.frame(t)))[..., 3]
+        ink = (a > 0).any(axis=0)
+        cols = np.nonzero(ink)[0]
+        runs, n = [], 0
+        for on in ink[cols[0]:cols[-1] + 1]:
+            if on:
+                if n:
+                    runs.append(n)
+                n = 0
+            else:
+                n += 1
+        return [g for g in runs if g >= 2]      # ignore sub-pixel seams inside letters
+
+    for theme in [k for k, v in captions.THEMES.items() if v["anim"] == "pop"]:
+        still = gaps(theme, 0.35)                 # "minutes" active, pop finished
+        popped = gaps(theme, 0.01)                # "minutes" at the start of its pop
+        assert len(popped) >= len(still) >= 1, (theme, still, popped)
+        assert min(popped) >= 0.5 * min(still), (theme, still, popped)
+
+
 def test_burnable_strips_emoji():
     assert captions.burnable("He lost $400k 😳🤯") == "He lost $400k"
 

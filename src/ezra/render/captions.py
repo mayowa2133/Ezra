@@ -311,7 +311,12 @@ class CaptionRenderer:
                 elif is_keyword(ch.words[i].w, self.keywords) and self.keyword_color:
                     color = self.keyword_color
                 if self.t["anim"] == "pop" and i == active and phase:
-                    wf = _font(self.font_path, int(self.size * (1.0 + 0.16 * (5 - phase) / 4)))
+                    grow = 1.0 + 0.16 * (5 - phase) / 4
+                    if len(ln) > 1:
+                        # the word grows about its centre: keep it out of the neighbouring spaces
+                        # (long words would otherwise run into the next one: "MINUTESTO")
+                        grow = min(grow, 1.0 + space / (2 * max(wdt, 1.0)))
+                    wf = _font(self.font_path, int(self.size * grow))
                 assert color is not None
                 c = (color[0], color[1], color[2], min(color[3], alpha))
                 cx = x + wdt / 2
