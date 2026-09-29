@@ -119,7 +119,10 @@ def _check(rule: CampaignRule, stage: str, ev: dict[str, Any]) -> RuleResult | N
         on = bool((ev["render_spec"] or {}).get("captions", True))
         return res("pass", "burned-in subtitles") if on else res("violation", "subtitles are required")
     if k == "logo" and "render_spec" in ev:
-        has = bool((ev["render_spec"] or {}).get("logo_key"))
+        rs = ev["render_spec"] or {}
+        if rs.get("campaign_watermark"):
+            return res("pass", "campaign watermark locked on every frame")
+        has = bool(rs.get("logo_key"))
         return res("pass", "logo overlay present") if has else res("violation", "brand logo is required")
     if k == "platforms" and ev.get("platforms"):
         bad = [x for x in ev["platforms"] if x not in p.get("allowed", [])]

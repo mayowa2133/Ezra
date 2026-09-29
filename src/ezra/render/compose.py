@@ -12,8 +12,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import re
 import shutil
 import subprocess
 import tempfile
@@ -142,6 +144,37 @@ def _png(img: Image.Image, path: Path) -> Path:
     return path
 
 
+BLEEP_PAD = 0.04        # seconds either side of a bleeped word
+
+
+def apply_word_edits(words: list[Word], spec: RenderSpec) -> tuple[list[Word], list[tuple[float, float]]]:
+    """Caption fixes and bleeps, each matched to one word by its start time (within 60 ms). A fix or
+    bleep that matches no word is an error, not a silent no-op. A bleeped word's caption is masked
+    (first letter and asterisks) unless a fix gives its text."""
+    out = [Word(w.w, w.s, w.e, w.p, w.spk) for w in words]
+
+    def find(t: float) -> Word:
+        best = min(out, key=lambda w: abs(w.s - t), default=None)
+        if best is None or abs(best.s - t) > 0.06:
+            raise ValueError(f"no word starts at {t:.2f}s")
+        return best
+
+    fixed = set()
+    for f in spec.caption_fixes:
+        w = find(f.at)
+        w.w = f.text
+        fixed.add(id(w))
+    ranges = []
+    for t in spec.bleep:
+        w = find(t)
+        if id(w) not in fixed:
+            core = re.sub(r"[^\w']", "", w.w)
+            tail = w.w[len(w.w.rstrip(".,!?;:")):]
+            w.w = (core[:1] + "*" * max(1, len(core) - 1) + tail) if core else w.w
+        ranges.append((max(0.0, w.s - BLEEP_PAD), w.e + BLEEP_PAD))
+    return out, ranges
+
+
 def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_src: list[float],
             spec: RenderSpec, out: Path, storage_path: Callable[[str], Path],
             detector: FaceDetector | None = None, progress: Progress | None = None,
@@ -154,6 +187,7 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
     has_audio = info["has_audio"]
     # intermediates live next to the output (same volume: large files stay off /tmp)
     out.parent.mkdir(parents=True, exist_ok=True)
+    words, bleep_src = apply_word_edits(words, spec)
     with tempfile.TemporaryDirectory(prefix=".ezra-render-", dir=out.parent) as tmp:
         tdir = Path(tmp)
         # 1. edit decision list -------------------------------------------------------------
@@ -178,6 +212,11 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             out_words = [Word(w.w, round(w.s - start, 3), round(w.e - start, 3), w.p, w.spk)
                          for w in words if w.e > start and w.s < end and not edl.is_filler(w.w)]
             cuts = [c - start for c in scene_cuts_src if start < c < end]
+        bleeps = [(a2, b2) for a, b in bleep_src
+                  if (a2 := (edl.map_time(pieces, a) if edited else a - start)) is not None
+                  and (b2 := (edl.map_time(pieces, b) if edited else b - start)) is not None]
+        if len(bleeps) != len(bleep_src):
+            raise ValueError("a bleeped word falls outside the clip or in a removed pause")
 
         # 2. reframing plan ---------------------------------------------------------------
         say(0.15, "finding faces")
@@ -341,14 +380,59 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
                          f"enable='gte(t,{max(0.0, duration - 3.0):.3f})'[{o}]")
             n_in += 1
             cur = o
+        wm_summary = None
+        if spec.campaign_watermark:
+            from . import watermark as wmk
+
+            cw = spec.campaign_watermark
+            wm_path = storage_path(cw.key)
+            digest = hashlib.sha256(wm_path.read_bytes()).hexdigest()
+            if cw.sha256 and digest != cw.sha256:
+                raise ValueError(f"campaign watermark {cw.key} changed (sha256 {digest[:12]} != {cw.sha256[:12]})")
+            avoid: list[tuple[str, tuple[int, int, int, int]]] = []
+            if renderer is not None:
+                avoid.append(("captions", (0, renderer.band_y, W, renderer.band_y + renderer.band_h)))
+            if hook is not None:
+                hx = (W - hook.width) // 2
+                hy = top_y + int(H * 0.02)
+                avoid.append(("hook", (hx, hy, hx + hook.width, hy + hook.height)))
+            if spec.cta_text:
+                avoid.append(("end card", (0, int(H * 0.36), W, int(H * 0.36) + int(H * 0.2))))
+            with Image.open(wm_path) as im:
+                if im.mode not in ("RGBA", "LA", "PA") and "transparency" not in im.info:
+                    raise ValueError("the campaign watermark has no transparency; it would cover the video with its "
+                                     "background")
+                mark_size = im.size
+            place = wmk.placement(mark_size, wmk.visible_bbox(wm_path), (W, H), (cw.center_x, cw.center_y),
+                                  cw.visible_width, avoid)
+            # uniform scale only (both sides from one factor), done with alpha-aware resampling so edges
+            # keep their colour (ffmpeg's scaler would darken them); overlaid 1:1 with no enable, so
+            # it is on every frame, and last, so nothing covers it
+            with Image.open(wm_path) as im:
+                sized = im.convert("RGBA").resize((place["width"], place["height"]), Image.Resampling.LANCZOS)
+            inputs += ["-loop", "1", "-i", str(_png(sized, tdir / "campaign-watermark.png"))]
+            o = nxt()
+            graph.append(f"[{cur}][{n_in}:v]overlay={place['x']}:{place['y']}:shortest=1[{o}]")
+            n_in += 1
+            cur = o
+            wm_summary = {"key": cw.key, "sha256": digest, **place}
         graph.append(f"[{cur}]format=yuv420p[vout]")
         maps = ["-map", "[vout]"]
         if has_audio:
             af = loudnorm_filter(in_args) + "," if spec.normalize_audio else ""
             # explicit output format: older ffmpeg (Debian 5.1) cannot negotiate a layout for
             # mono sources whose channel layout is unset
-            graph.append(f"[0:a]{af}aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:"
-                         f"channel_layouts=stereo[aout]")
+            if bleeps:
+                on = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in bleeps)
+                graph.append(f"[0:a]{af}aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:"
+                             f"channel_layouts=stereo,volume=volume='if({on},0,1)':eval=frame[amain]")
+                graph.append(f"sine=frequency=1000:sample_rate=48000:duration={duration:.3f},"
+                             f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+                             f"volume=volume='if({on},0.25,0)':eval=frame[abeep]")
+                graph.append("[amain][abeep]amix=inputs=2:normalize=0:duration=first[aout]")
+            else:
+                graph.append(f"[0:a]{af}aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:"
+                             f"channel_layouts=stereo[aout]")
             maps += ["-map", "[aout]"]
         body = tdir / "body.mp4"
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs, "-filter_complex", ";".join(graph),
@@ -397,6 +481,8 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
     real = probe(out)
     return RenderResult(out, real["duration"], W, H, layout.summary(plans),
                         {**summary, "scenes": [_scene_summary(p) for p in plans], "source_captions": source_captions,
+                         "campaign_watermark": wm_summary, "bleeps": bleeps,
+                         "caption_fixes": [f.model_dump() for f in spec.caption_fixes],
                          "punch_in": zoom_ranges, "broll": [b.model_dump() for b in spec.broll]},
                         srt, ass, thumb, out_words, time.time() - t0)
 

@@ -106,3 +106,7 @@ def test_render_stage_compliance():
     assert r["status"] == "FAIL" and len([x for x in r["reasons"] if x["outcome"] == "fail"]) == 2
     spec = {"captions": True, "logo_key": "brand/x.png"}
     assert compliance.evaluate(c, "render", render_spec=spec)["status"] == "PASS"
+    # the campaign's own locked watermark satisfies "logo required"
+    spec = {"captions": True, "logo_key": None, "campaign_watermark": {"key": "c/wm.png", "sha256": "0" * 64}}
+    r = compliance.evaluate(c, "render", render_spec=spec)
+    assert r["status"] == "PASS"

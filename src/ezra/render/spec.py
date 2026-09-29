@@ -21,6 +21,21 @@ class BrollInsert(BaseModel):
     reason: str | None = None
 
 
+class CampaignWatermark(BaseModel):
+    """A campaign-supplied watermark file, placed unmodified for the whole clip (uniform scale only)."""
+    key: str = Field(description="Storage key of the supplied file")
+    sha256: str | None = Field(None, description="Expected hash; the render refuses a changed file")
+    center_x: float = Field(0.5, ge=0, le=1, description="Centre of the visible mark, fraction of width")
+    center_y: float = Field(0.6, ge=0, le=1, description="Centre of the visible mark, fraction of height")
+    visible_width: float = Field(0.34, gt=0.05, le=0.9, description="Width of the visible mark, share of frame")
+
+
+class WordFix(BaseModel):
+    """Correct one caption word, found by its start time in the source (seconds)."""
+    at: float
+    text: str
+
+
 class RenderSpec(BaseModel):
     aspect: str = "9:16"
     layout: str = "auto"
@@ -42,6 +57,9 @@ class RenderSpec(BaseModel):
     logo_key: str | None = None
     logo_position: str = "top-right"
     watermark: str | None = None
+    campaign_watermark: CampaignWatermark | None = None
+    caption_fixes: list[WordFix] = Field(default_factory=list, description="Spelling fixes, by word start time")
+    bleep: list[float] = Field(default_factory=list, description="Source start times of words to bleep")
     intro_key: str | None = None
     outro_key: str | None = None
     cta_text: str | None = None
