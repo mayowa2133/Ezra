@@ -71,6 +71,10 @@ THEMES: dict[str, dict[str, Any]] = {
     "story": {"weight": "heavy", "size": 84, "case": "upper", "fill": "#FFFFFF", "stroke": None,
               "stroke_w": 0, "active": None, "mode": "word", "anim": "none", "words": 1, "position": 0.66,
               "box": None, "shadow": True, "lexicon": False},
+    # the same look in short phrases (storytelling picks the chunks: phrases, impact words alone)
+    "story-phrase": {"weight": "heavy", "size": 74, "case": "upper", "fill": "#FFFFFF", "stroke": None,
+                     "stroke_w": 0, "active": None, "mode": "chunk", "anim": "none", "words": 3, "position": 0.66,
+                     "box": None, "shadow": True, "lexicon": False},
 }
 ANIM_SECONDS = 0.14
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
