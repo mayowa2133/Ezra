@@ -417,6 +417,43 @@ def mix_audio(tl: Timeline, base: Path, total: float, tdir: Path) -> Path:
 
 # --- captions and assembly --------------------------------------------------------------------------
 
+def fit_box(shot: Shot, src_w: int, src_h: int) -> tuple[float, float]:
+    """Vertical extent (top, bottom, as fractions of the frame) of a "fit" shot's picture: the part a
+    title card must not cover."""
+    x0, y0, x1, y1 = shot.region or [0.0, 0.0, 1.0, 1.0]
+    rw, rh = (x1 - x0) * src_w, (y1 - y0) * src_h
+    fit = min(W / rw, H * 0.8 / rh)
+    oh = float(min(2 * int(rh * fit * shot.zoom[1] / 2), int(H * 0.86)))
+    c = H * 0.44
+    return (c - oh / 2) / H, (c + oh / 2) / H
+
+
+def keep_titles_off_action(tl: Timeline, base: Path, gap: float = 0.015) -> list[str]:
+    """Obstruction rule: a title card shown over a "fit" shot (a play or gesture shown whole) moves
+    into the blurred space above the picture (or below it if there's no room above), so scores and
+    quotes never cover the rim, the ball or the gesture. Returns what moved."""
+    moved = []
+    ends = [s.t for s in tl.shots[1:]] + [tl.end]
+    for ti in tl.titles:
+        a, b = float(ti["s"]), float(ti["e"])
+        for s, e in zip(tl.shots, ends):
+            if s.mode != "fit" or e <= a or s.t >= b:
+                continue
+            info = _probe((base / s.src).resolve())
+            top, bot = fit_box(s, info["w"], info["h"])
+            lines = ti["text"].count("\n") + 1 + (len(ti["text"]) > 26)
+            half = lines * ti.get("size", 78) * 1.18 / 2 / H
+            y = float(ti.get("y", 0.42))
+            if y + half < top - gap or y - half > bot + gap:
+                continue
+            if top - gap - 2 * half > 0.04:
+                ti["y"] = round(top - gap - half, 3)
+            else:
+                ti["y"] = round(min(bot + gap + half, 0.6), 3)
+            moved.append(f"{ti['text']!r} -> y={ti['y']} (clear of {s.label or s.src})")
+    return moved
+
+
 def title_card(text: str, y: float = 0.42, size: int = 78, color: str = "#FFFFFF") -> Any:
     """Full-frame transparent PNG with `text` centred (wrapped), heavy caps, soft shadow: quotes and
     scores the story needs on screen as text rather than narration."""
@@ -541,6 +578,7 @@ def render(tl: Timeline, out: Path, work: Path | None = None) -> dict[str, Any]:
             rend.emoji = [None] * len(rend.chunks)
         title_in: list[str] = []
         graph = [f"[0:v][1:v]overlay=0:{rend.band_y}:shortest=1[c0]"]
+        report_moves = keep_titles_off_action(tl, base)
         for k, ti in enumerate(tl.titles):
             png = tdir / f"title-{k}.png"
             title_card(ti["text"], ti.get("y", 0.42), ti.get("size", 78), ti.get("color", "#FFFFFF")).save(png)
@@ -568,5 +606,5 @@ def render(tl: Timeline, out: Path, work: Path | None = None) -> dict[str, Any]:
     durs = [r["dur"] for r in report]
     return {"out": str(out), "duration": round(total, 3), "shots": len(report),
             "mean_shot": round(float(np.mean(durs)), 2),
-            "median_shot": round(float(np.median(durs)), 2), "shot_report": report,
+            "median_shot": round(float(np.median(durs)), 2), "titles_moved": report_moves, "shot_report": report,
             "cuts_per_10s": [sum(1 for s in tl.shots[1:] if a <= s.t < a + 10) for a in range(0, math.ceil(total), 10)]}

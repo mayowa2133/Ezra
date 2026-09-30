@@ -225,3 +225,18 @@ def test_audio_clips_play_across_shot_cuts(tmp_path):
     x = np.frombuffer(pcm, np.int16).astype(float)
     rms = lambda a, b: float(np.sqrt(np.mean(x[int(a * 16000):int(b * 16000)] ** 2)))
     assert rms(0.0, 0.4) < 50 < rms(0.7, 2.3) and rms(2.7, 3.0) < 50
+
+
+def test_title_cards_move_off_a_fit_shot(tmp_path):
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=1920x1080:r=30:d=1",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(tmp_path / "w.mp4")],
+                   check=True)
+    shot = story.Shot("w.mp4", 0.0, 0.0, mode="fit", region=[0.3, 0.05, 0.95, 0.8], zoom=[1.0, 1.03])
+    tl = story.Timeline(shots=[shot], end=1.0, narration="n.wav", words=[], base=str(tmp_path),
+                        titles=[{"text": "Game 2\nJa Morant 47", "s": 0.1, "e": 0.9, "y": 0.36, "size": 84}])
+    top, bot = story.fit_box(shot, 1920, 1080)
+    assert 0.2 < top < 0.35 < 0.5 < bot
+    moved = story.keep_titles_off_action(tl, tmp_path)
+    y = tl.titles[0]["y"]
+    half = 2 * 84 * 1.18 / 2 / 1920
+    assert moved and y + half <= top                          # the whole card sits above the picture
