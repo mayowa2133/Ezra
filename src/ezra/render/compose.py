@@ -247,9 +247,10 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             streams = ["blur"]
         graph.append(f"[0:v]fps={FPS},setsar=1,split={len(streams)}" + "".join(f"[in_{m}]" for m in streams))
         if "track" in streams:
-            pcs = []
+            pcs: list[tuple[float, ...]] = []
             for p in plans:
-                pcs += [(s.start, s.end, s.x) for s in p.shots] if p.shots else [(p.start, p.end, 0.5)]
+                pcs += [(s.start, s.end, s.x) if s.x1 is None else (s.start, s.end, s.x, s.x1) for s in p.shots] \
+                    if p.shots else [(p.start, p.end, 0.5)]
             graph.append(f"[in_track]scale={W}:{H}:force_original_aspect_ratio=increase,"
                          f"crop={W}:{H}:'{layout.x_expr(pcs)}':'(ih-oh)/2'[s_track]")
         if "blur" in streams:
@@ -491,7 +492,8 @@ def _scene_summary(p: layout.ScenePlan) -> dict[str, Any]:
     """What the reframer decided for one scene (crop centres as fractions of source width)."""
     d: dict[str, Any] = {"start": round(p.start, 3), "end": round(p.end, 3), "mode": p.mode, "faces": p.faces}
     if p.mode == "track":
-        d["shots"] = [[round(sh.start, 2), round(sh.end, 2), round(sh.x, 4)] for sh in p.shots]
+        d["shots"] = [[round(sh.start, 2), round(sh.end, 2), round(sh.x, 4)]
+                      + ([round(sh.x1, 4)] if sh.x1 is not None else []) for sh in p.shots]
     if p.split_x:
         d["split_x"] = [round(x, 4) for x in p.split_x]
     if p.graphics:

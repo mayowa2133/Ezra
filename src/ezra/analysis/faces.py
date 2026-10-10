@@ -293,22 +293,71 @@ def _talk(prev: list[tuple[Face, tuple[np.ndarray, np.ndarray] | None]], f: Face
     return round(max(0.0, mouth - eyes) / 255.0, 4)
 
 
+MOTION_FLOOR = 0.4     # mean residual change per pixel below which nothing moved (small players still count)
+MAX_PAN = 0.25          # largest camera move between two samples we look for, as a share of the frame
+
+
+def _profile_shift(a: np.ndarray, b: np.ndarray, max_shift: int) -> int:
+    """The shift d that best lines up b[i + d] with a[i] (1-D brightness profiles)."""
+    a, b = a - a.mean(), b - b.mean()
+    best, best_err = 0, float("inf")
+    for d in range(-max_shift, max_shift + 1):
+        x, y = (a[:len(a) - d], b[d:]) if d >= 0 else (a[-d:], b[:len(b) + d])
+        if len(x) < len(a) // 2:
+            continue
+        err = float(np.abs(x - y).mean())
+        if err < best_err - 1e-9:
+            best, best_err = d, err
+    return best
+
+
+def camera_shift(prev: np.ndarray, cur: np.ndarray) -> tuple[int, int]:
+    """How far the camera moved between two grey frames, as a (dx, dy) pixel shift of the scenery:
+    the shift that best lines up their column and row brightness profiles. Panning broadcast
+    cameras move the whole picture; what still differs after undoing that is the action."""
+    p, c = prev.astype(np.float64), cur.astype(np.float64)
+    dx = _profile_shift(p.mean(axis=0), c.mean(axis=0), int(MAX_PAN * p.shape[1]))
+    dy = _profile_shift(p.mean(axis=1), c.mean(axis=1), int(MAX_PAN * p.shape[0]))
+    return dx, dy
+
+
+def _soften(img: np.ndarray) -> np.ndarray:
+    """3x3 box blur (float)."""
+    f = np.pad(img.astype(np.float32), 1, mode="edge")
+    h, w = img.shape
+    out = np.zeros((h, w), np.float32)
+    for i in range(3):
+        for j in range(3):
+            out += f[i:i + h, j:j + w]
+    return out / 9.0
+
+
 def _motion(prev: np.ndarray | None, cur: np.ndarray) -> tuple[float | None, float]:
-    """Where between two frames things moved: (centre x of the motion, share of all motion
-    inside a crop-width window around it). None when the frame barely changed."""
+    """Where between two frames things moved: (centre x of the busiest crop-width window, share
+    of all motion inside it). Camera moves are undone first, so on a panning wide shot it is the
+    players that count, not the crowd sliding past. None when nothing but the camera moved."""
     if prev is None:
         return None, 0.0
-    diff = np.abs(cur.astype(np.int16) - prev.astype(np.int16))
-    diff[diff < 12] = 0                                   # sensor noise, compression shimmer
-    cols = diff.sum(axis=0).astype(np.float64)
+    dx, dy = camera_shift(prev, cur)
+    h, w = cur.shape
+    # the overlap of the two frames once the scenery is lined up (cur[y + dy, x + dx] ~ prev[y, x])
+    ys, xs = slice(max(0, -dy), h - max(0, dy)), slice(max(0, -dx), w - max(0, dx))
+    yc, xc = slice(max(0, dy), h - max(0, -dy)), slice(max(0, dx), w - max(0, -dx))
+    # blurred, so the sub-pixel part of a pan doesn't leave every edge of the scenery behind
+    diff = np.abs(_soften(cur[yc, xc]) - _soften(prev[ys, xs]))
+    diff[diff < 14] = 0                                   # sensor noise, compression shimmer
+    cols = np.zeros(w)
+    cols[xc] = diff.sum(axis=0)
     total = float(cols.sum())
-    if total / diff.size < 1.5:
+    if total / max(1, diff.size) < MOTION_FLOOR:
         return None, 0.0
-    x = np.arange(len(cols)) / max(1, len(cols) - 1)
-    cx = float((cols * x).sum() / total)
-    half = MOTION_WINDOW / 2
-    near = float(cols[(x >= cx - half) & (x <= cx + half)].sum() / total)
-    return cx, near
+    win = max(1, int(round(MOTION_WINDOW * w)))
+    sums = np.convolve(cols, np.ones(win), "valid")       # motion inside each crop-width window
+    best = int(np.argmax(sums))
+    inside = cols[best:best + win]
+    x = np.arange(best, best + win)
+    cx = float((inside * x).sum() / max(1e-9, inside.sum())) / max(1, w - 1)
+    return cx, float(sums[best] / total)
 
 
 Box = tuple[float, float, float, float]            # x0, y0, x1, y1 as fractions of the frame
@@ -590,7 +639,7 @@ def sample_frames(media: Path, start: float, end: float, fps: float = 2.0,
             f.talk = _talk(prev_faces, f, patch)
         prev_faces = now
         out.append((i / fps, faces))
-        small = gray[::8, ::8]
+        small = gray[::4, ::4]
         mx, share = _motion(prev_small, small)
         motion.append((i / fps, mx, share))
         prev_small = small
