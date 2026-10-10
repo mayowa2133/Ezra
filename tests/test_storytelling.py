@@ -240,3 +240,87 @@ def test_title_cards_move_off_a_fit_shot(tmp_path):
     y = tl.titles[0]["y"]
     half = 2 * 84 * 1.18 / 2 / 1920
     assert moved and y + half <= top                          # the whole card sits above the picture
+
+
+def _bursts(spans: list[tuple[float, float]], length: float) -> np.ndarray:
+    sr = narration.SR
+    x = np.zeros(int(length * sr), np.float32)
+    for a, b in spans:
+        x[int(a * sr):int(b * sr)] = 0.3 * np.sin(np.arange(int(b * sr) - int(a * sr)) / 5)
+    return x
+
+
+def test_line_defaults_and_speed_cache_key():
+    ln = narration.Line("Boozer did.")
+    assert ln.speed == 1.0 and ln.take == ""
+    old = __import__("hashlib").sha256(json.dumps(["kokoro", "bf_emma", "Hi."]).encode()).hexdigest()[:20]
+    assert voicebox._cache_key("kokoro", "bf_emma", "Hi.") == old          # clips cached before speed existed
+    assert voicebox._cache_key("kokoro", "bf_emma", "Hi.", 1.1) != old
+
+
+def test_tempo_speeds_up_keeping_length_ratio(tmp_path):
+    src = tmp_path / "a.wav"
+    narration._write(src, _bursts([(0.0, 2.0)], 2.0))
+    voicebox._tempo(src, tmp_path / "b.wav", 1.25)
+    assert abs(len(narration._read(tmp_path / "b.wav")) / narration.SR - 1.6) < 0.03
+
+
+def test_split_take_cuts_in_the_silences():
+    x = _bursts([(0.1, 1.0), (1.4, 2.0), (2.2, 3.0)], 3.2)
+    W = narration.TimedWord
+    words = [[W("a", 0.1, 0.5), W("b", 0.55, 1.0)], [W("c", 1.4, 2.0)], [W("d", 2.2, 3.0)]]
+    out = narration.split_take(x, words)
+    assert len(out) == 3
+    for (seg, ws, t0), (a, b) in zip(out, [(0.1, 1.0), (1.4, 2.0), (2.2, 3.0)]):
+        assert abs(t0 - (a - 0.03)) < 0.02 and abs(len(seg) / narration.SR - (b - a + 0.06)) < 0.03
+        assert abs(ws[0].s - 0.03) < 0.02                                   # words re-based to the segment
+    assert [w.w for w in out[0][1]] == ["a", "b"]
+
+
+def test_build_reads_a_take_once_and_keeps_pauses(tmp_path, monkeypatch):
+    calls = []
+
+    def speak(text, dest, voice, speed, cache_dir):
+        calls.append((text, speed))
+        n = len(text.split())
+        narration._write(dest, _bursts([(0.2 + k * 0.5, 0.6 + k * 0.5) for k in range(n)] if n > 2 else
+                                       [(0.2, 0.6), (1.5, 1.9)] if n == 2 else [(0.2, 0.6)], 3.0))
+        return dest
+
+    class Word:
+        def __init__(self, w, s, e):
+            self.word, self.start, self.end = w, s, e
+
+    class Asr:
+        def __init__(self, *a, **k):
+            pass
+
+        def transcribe(self, path, **k):        # words where the bursts are (trimmed: first at 0.03)
+            x = narration._read(__import__("pathlib").Path(path))
+            loud = np.concatenate([[0], (narration._rms(x) > 0.05).astype(int), [0]])
+            edges = np.flatnonzero(np.diff(loud)) * 0.01
+            spans = list(zip(edges[::2], edges[1::2]))
+            text = calls[-1][0].replace(".", "").split()
+            return [type("S", (), {"words": [Word(w, s, e) for w, (s, e) in zip(text, spans)]})], None
+
+    import faster_whisper
+    monkeypatch.setattr(faster_whisper, "WhisperModel", Asr)
+    monkeypatch.setattr(voicebox, "speak", speak)
+    lines = [narration.Line("One two.", 0.3, take="A", speed=1.1), narration.Line("Three.", 0.2, take="A"),
+             narration.Line("Four five.", 0.0, speed=0.9)]
+    _, timed = narration.build(lines, tmp_path, lead_in=0.1)
+    assert calls == [("One two. Three.", 1.1), ("Four five.", 0.9)]
+    assert [t.text for t in timed] == ["One two.", "Three."] + ["Four five."]
+    # inside the take: "two" ends at 1.06, "three" starts 1.2 -> natural gap ~0.08 < 0.3, so the 0.3 pause
+    assert abs(timed[1].start - timed[0].end - 0.3) < 0.02
+    assert [w.w for w in timed[0].words] == ["One", "two."] and timed[1].words[0].w == "Three."
+    assert all(abs(t.words[0].s - t.start - 0.03) < 0.02 for t in timed)
+    assert json.loads((tmp_path / "timing.json").read_text())[2]["text"] == "Four five."
+
+
+def test_a_long_natural_gap_inside_a_take_is_kept():
+    # "One" and "Two." read with a 1.3 s gap, scripted pause 0.2: the line split keeps the longer gap
+    x = _bursts([(0.03, 0.43), (1.73, 2.13)], 2.2)
+    W = narration.TimedWord
+    (a, _, t0), (_, _, t1) = narration.split_take(x, [[W("One", 0.03, 0.43)], [W("Two.", 1.73, 2.13)]])
+    assert abs(t1 - (t0 + len(a) / narration.SR) - 1.24) < 0.03

@@ -3,7 +3,8 @@
 Voicebox runs on the user's machine (default http://127.0.0.1:17493, `EZRA_VOICEBOX_URL` to change it)
 and exposes preset voices, e.g. Kokoro's British `bf_alice`. Nothing is sent to a paid API.
 Generated audio is cached by (profile, engine, text), so re-running a timeline only regenerates the
-lines whose text changed.
+lines whose text changed. Voicebox's /generate has no speed control, so a `speed` other than 1.0 is
+applied afterwards with ffmpeg's atempo (pitch kept).
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -55,11 +57,24 @@ def preset_profile(engine: str, voice_id: str, name: str | None = None) -> str:
     return str(created["id"])
 
 
-def speak(text: str, dest: Path, voice: str = "bf_alice", engine: str = "kokoro",
+def _cache_key(engine: str, voice: str, text: str, speed: float = 1.0) -> str:
+    """Speed 1.0 keeps the original key, so clips cached before speed existed are reused."""
+    parts: list[Any] = [engine, voice, text] + ([speed] if speed != 1.0 else [])
+    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:20]
+
+
+def _tempo(src: Path, dest: Path, speed: float) -> None:
+    """`src` played `speed` times faster, pitch kept."""
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-af", f"atempo={speed}", str(dest)], check=True)
+
+
+def speak(text: str, dest: Path, voice: str = "bf_alice", engine: str = "kokoro", speed: float = 1.0,
           cache_dir: Path | None = None, timeout: float = 300) -> Path:
-    """Render `text` to a WAV at `dest` (cached)."""
-    key = hashlib.sha256(json.dumps([engine, voice, text]).encode()).hexdigest()[:20]
-    cache = (cache_dir or dest.parent) / f".vb-{key}.wav"
+    """Render `text` to a WAV at `dest` (cached), `speed` times the voice's natural pace."""
+    cache = (cache_dir or dest.parent) / f".vb-{_cache_key(engine, voice, text, speed)}.wav"
+    if not cache.exists() and speed != 1.0:
+        _tempo(speak(text, cache.with_suffix(".src.wav"), voice, engine, 1.0, cache_dir, timeout), cache, speed)
+        cache.with_suffix(".src.wav").unlink()
     if not cache.exists():
         profile = preset_profile(engine, voice)
         gen = _call("POST", "/generate", {"profile_id": profile, "text": text, "engine": engine, "language": "en"})
