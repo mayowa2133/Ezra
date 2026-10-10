@@ -45,7 +45,8 @@ class Settings(BaseSettings):
     diarizer: str = Field("local", description="local | pyannote | none")
     face_detector: str = Field("auto", description="auto (YuNet, Haar offline) | yunet | haar | mediapipe")
     text_detector: str = Field("auto", description="auto (PP-OCRv3, morphological offline) | ppocr | morph")
-    llm: str = Field("heuristic", description="heuristic | claude-cli | codex-cli | openai-compatible")
+    llm: str = Field("auto", description="auto (claude-cli, else codex-cli, else heuristic) | heuristic | claude-cli | "
+                                         "codex-cli | openai-compatible")
     llm_model: str | None = None
     llm_base_url: str | None = None
     clip_engine: str = Field("native", description="native | openshorts")

@@ -243,10 +243,13 @@ def transcript(source_id: int, start: float = 0.0) -> None:
 @app.command("find")
 def find(source_id: int | None = typer.Option(None, "--source", "-s"),
          campaign: str | None = typer.Option(None, "--campaign", "-c"), max_candidates: int = 40,
+         prompt: str | None = typer.Option(None, help="What to look for, e.g. \"moments about losing money\" "
+                                                      "(needs a model; see EZRA_LLM)"),
          queue: bool = False) -> None:
     """Generate and rank candidate moments."""
     for sid in _sources_for(source_id, campaign):
-        out = run_job("find_candidates", {"source_id": sid, "campaign": campaign, "max_candidates": max_candidates},
+        out = run_job("find_candidates", {"source_id": sid, "campaign": campaign, "max_candidates": max_candidates,
+                                          "prompt": prompt},
                       queue, f"candidates {sid}")
         if not queue:
             console.print(f"source {sid}: {len(out['candidates'])} candidates")
@@ -817,12 +820,15 @@ def jobs_retry(job_id: int) -> None:
 @app.command()
 def run(campaign: str, top: int = 5, max_candidates: int = 40,
         autonomous: bool = typer.Option(False, help="Auto-approve PASS clips and publish (opt-in, see docs)"),
-        agent: str | None = typer.Option(None, help="claude | codex | local: a model critic picks each clip's "
-                                                    "start/end and scores it (falls back to heuristics)"),
+        agent: str | None = typer.Option(None, help="claude | codex | local | none: the model that proposes "
+                                                    "moments and picks each clip's start/end (default EZRA_LLM, "
+                                                    "auto: a local Claude/Codex CLI when installed)"),
+        prompt: str | None = typer.Option(None, help="What this run is looking for; re-finds candidates with it"),
         queue: bool = False) -> None:
     """analyze → candidates → rank → render top N → review queue (→ publish with --autonomous)."""
     out = run_job("run_campaign", {"campaign": campaign, "render_top": top, "max_candidates": max_candidates,
-                                   "autonomous": autonomous, "agent": agent}, queue, f"run {campaign}",
+                                   "autonomous": autonomous, "agent": agent, "prompt": prompt}, queue,
+                  f"run {campaign}",
                   dedupe_key=f"run-{campaign}")
     if queue:
         return
@@ -839,7 +845,8 @@ def run(campaign: str, top: int = 5, max_candidates: int = 40,
                       f"\"{_clip_text(cand.get('opens_with') or cand.get('transcript') or '', 60)}\"")
         console.print(t)
     if out.get("critic"):
-        console.print(f"critic scored {out['critic']['critic_scored']} candidates "
+        console.print(f"model proposed {out['critic'].get('model_proposed', 0)} moments · critic scored "
+                      f"{out['critic']['critic_scored']} candidates "
                       f"({out['critic']['heuristic_only']} kept heuristic scores)")
     if "autonomous" in out:
         console.print(f"autonomous: {out['autonomous']}")
