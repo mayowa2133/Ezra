@@ -51,6 +51,7 @@ class Shot:
     audio_len: float | None = None         # play the source audio for at most this long
     safe_top: float = 0.0                  # share of the source height kept out of frame (broadcast bugs)
     safe_bottom: float = 0.12
+    caption_y: float | None = None         # this shot's caption centre (fraction of height), off a face or ball
     label: str = ""
 
 
@@ -577,7 +578,13 @@ def render(tl: Timeline, out: Path, work: Path | None = None) -> dict[str, Any]:
             rend.chunks = phrase_chunks(raw, {w.lower().strip(" ,.!?;:") for w in tl.impact_words})
             rend.emoji = [None] * len(rend.chunks)
         title_in: list[str] = []
-        graph = [f"[0:v][1:v]overlay=0:{rend.band_y}:shortest=1[c0]"]
+        band_y: str = str(rend.band_y)
+        lo, hi = int(H * 0.08), int(H * 0.82) - rend.band_h
+        for i, s in reversed(list(enumerate(tl.shots))):
+            if s.caption_y is not None:     # this shot moves the caption band (e.g. above a player, below a rim)
+                y = max(lo, min(hi, int(H * s.caption_y - rend.band_h / 2)))
+                band_y = f"if(between(t,{starts[i] / FPS:.3f},{starts[i + 1] / FPS - 0.001:.3f}),{y},{band_y})"
+        graph = [f"[0:v][1:v]overlay=0:'{band_y}':shortest=1[c0]"]
         report_moves = keep_titles_off_action(tl, base)
         for k, ti in enumerate(tl.titles):
             png = tdir / f"title-{k}.png"

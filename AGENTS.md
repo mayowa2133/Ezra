@@ -71,3 +71,11 @@ Tests use synthetic fixtures (`benchmark/fixtures.py`, TTS + a public-domain por
 `~/.cache/ezra/fixtures`; `tests/test_e2e.py` drives the pipeline, the API, the CLI and the MCP server
 over stdio. Add a test with every behaviour change; run the benchmark when you touch scoring,
 candidates, layout, captions or the EDL. Commit in small, working slices.
+
+## Video review preference
+
+For every video, perform two editorial grading passes before showing the user. Review the initial
+cut for hook, story, pacing and payoff, apply concrete improvements, then review the revised
+render for engagement, framing, captions, audio and accuracy. Keep both scores and observations
+with the project; scores are editorial judgments, not promises of views. See
+`docs/VIDEO_REVIEW.md` for the SportsRivalry workflow and style preferences.
