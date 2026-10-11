@@ -39,6 +39,7 @@ FROM base AS test
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --extra local
 COPY tests ./tests
+COPY scripts ./scripts
 RUN chown -R ezra /app
 USER ezra
 ENV HOME=/home/ezra
