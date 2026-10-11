@@ -713,3 +713,74 @@ def test_pan_endpoint_keeps_large_source_graphics_whole():
     overlays = [(t, [box]) for t in (0.0, 0.5, 0.9)]
     layout._protect(plan, overlays, half=0.15, vertical=True, auto=True)
     assert plan.mode == "blur" and plan.protected == "shown whole"
+
+
+def _sentences(n: int, per: int = 4, step: float = 0.5) -> list[Word]:
+    """n sentences of `per` words, each ending in a full stop."""
+    ws = words_from(" ".join(f"w{i}" for i in range(n * per)), step=step)
+    for i in range(per - 1, len(ws), per):
+        ws[i].w += "."
+    return ws
+
+
+def test_rhythm_zoom_alternates_sentences_and_skips_blur_scenes():
+    from ezra.render.compose import rhythm
+
+    ws = _sentences(6, per=6)                           # a sentence every 3 s, 18 s long
+    plans = [layout.ScenePlan(0.0, 12.0, "track"), layout.ScenePlan(12.0, 18.0, "blur")]
+    ranges, changes = rhythm(ws, plans, 18.0)
+    assert ranges == [(3.0, 6.0), (9.0, 12.0)]          # in on the 2nd and 4th sentences; off in the blur
+    assert changes == [3.0, 6.0, 9.0, 12.0]
+    quick = _sentences(6, per=2)                        # a sentence a second: the zoom holds 2.5 s at least
+    ranges, _ = rhythm(quick, [layout.ScenePlan(0.0, 6.0, "track")], 6.0)
+    assert ranges and all(b - a >= 2.5 for a, b in ranges[:-1])
+
+
+def test_sfx_spacing_and_track(tmp_path):
+    import wave
+
+    from ezra.render import sfx
+
+    assert sfx.spaced([0.1, 2.0, 2.5, 4.0, 9.9], 10.0) == [2.0, 4.0]   # edges and close pairs dropped
+    path = sfx.track([1.0], 2.0, tmp_path / "s.wav")
+    with wave.open(str(path)) as w:
+        assert (w.getnchannels(), w.getframerate()) == (2, sfx.RATE)
+        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, 2)[:, 0].astype(float)
+    peak = np.abs(pcm).max() / 32767
+    assert abs(20 * np.log10(peak) - sfx.WHOOSH_DB) < 0.5
+    loud = np.flatnonzero(np.abs(pcm) > 0.05 * np.abs(pcm).max()) / sfx.RATE
+    assert loud.min() > 0.75 and loud.max() < 1.25                   # centred on the cut
+
+
+def _talk(path: Path, secs: float) -> Path:
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:size=1280x720:rate=25",
+                    "-f", "lavfi", "-i", "sine=frequency=300:sample_rate=44100", "-t", f"{secs}",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(path)], check=True)
+    return path
+
+
+def test_real_render_loops_on_the_last_word_with_rhythm_and_sfx(tmp_path):
+    src = _talk(tmp_path / "talk.mp4", 9.0)
+    ws = _sentences(3, per=6)[:-1] + [Word("end.", 8.5, 8.6)]   # last word ends 0.4 s before the clip does
+
+    class NoFaces:
+        name = "none"
+
+        def detect(self, gray, rgb=None):
+            return []
+
+    spec = RenderSpec(layout="center", caption_theme="clean", remove_silence=False, remove_fillers=False,
+                      thumbnail=False, sfx=True)
+    res = compose(src, 0.0, 9.0, ws, [], spec, tmp_path / "out.mp4", lambda k: Path(k), detector=NoFaces())
+    assert res.edit_summary["loop_trim"] == pytest.approx(0.26, abs=0.01)
+    assert abs(probe(res.video)["duration"] - 8.74) < 0.08
+    assert res.edit_summary["punch_in"] == [(3.0, 6.0)]
+    assert res.edit_summary["sfx"] == [3.0, 6.0]
+    # a campaign minimum above the tightened length keeps the tail
+    kept = compose(src, 0.0, 9.0, ws, [], spec.model_copy(update={"sfx": False}), tmp_path / "kept.mp4",
+                   lambda k: Path(k), detector=NoFaces(), min_duration=8.9)
+    assert kept.edit_summary["loop_trim"] == 0.0 and abs(kept.duration - 9.0) < 0.08
+    # an end card needs the tail too
+    card = compose(src, 0.0, 9.0, ws, [], spec.model_copy(update={"cta_text": "Follow"}), tmp_path / "card.mp4",
+                   lambda k: Path(k), detector=NoFaces())
+    assert card.edit_summary["loop_trim"] == 0.0

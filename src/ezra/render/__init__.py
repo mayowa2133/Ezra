@@ -134,7 +134,8 @@ def render_candidate(candidate_id: int, spec: dict[str, Any] | RenderSpec | None
     t0 = time.time()
     try:
         result = compose(sources.local_path(src), cand.start, cand.end, words, cuts, rs, work / "clip.mp4",
-                         storage.local_path, progress=lambda f, m: say(f, m), quiet=quiet)
+                         storage.local_path, progress=lambda f, m: say(f, m), quiet=quiet,
+                         min_duration=camp.min_duration if camp else None)
     except Exception as e:
         with db.session() as s:
             v = s.get(ClipVersion, ver_id)
