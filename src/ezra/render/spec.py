@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 
 ASPECTS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080), "4:5": (1080, 1350)}
 LAYOUTS = {"auto", "track", "split", "blur", "center", "static"}
-PUNCH_INS = {"none", "hook", "emphasis"}
+PUNCH_INS = {"none", "hook", "emphasis", "rhythm"}
 
 
 class BrollInsert(BaseModel):
@@ -67,7 +67,11 @@ class RenderSpec(BaseModel):
     silence_threshold: float = Field(0.6, ge=0.2, le=3.0, description="Pauses longer than this are shortened")
     remove_fillers: bool = True
     normalize_audio: bool = True
-    punch_in: str = "none"
+    punch_in: str = Field("rhythm", description="none | hook | emphasis | rhythm (zoom in and out on alternate "
+                                                "sentences, the jump-zoom look of edited talking heads)")
+    sfx: bool = Field(False, description="A soft whoosh under each cut and zoom change")
+    loop_ending: bool = Field(True, description="End right after the last word (no trailing air) so the replay "
+                                                 "flows on; off when there is a CTA card or an outro")
     broll: list[BrollInsert] = Field(default_factory=list)
     thumbnail: bool = True
     variant: str | None = Field(None, description="Experiment variant key")

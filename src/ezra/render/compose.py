@@ -32,7 +32,7 @@ from PIL import Image
 from ..analysis.faces import FaceDetector, Sampled, get_detector, sample_frames
 from ..transcription.base import Word, in_span
 from . import captions as cap
-from . import edl, layout
+from . import edl, layout, sfx
 from .spec import RenderSpec
 
 FPS = 30
@@ -178,7 +178,8 @@ def apply_word_edits(words: list[Word], spec: RenderSpec) -> tuple[list[Word], l
 def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_src: list[float],
             spec: RenderSpec, out: Path, storage_path: Callable[[str], Path],
             detector: FaceDetector | None = None, progress: Progress | None = None,
-            quiet: list[tuple[float, float]] | None = None) -> RenderResult:
+            quiet: list[tuple[float, float]] | None = None,
+            min_duration: float | None = None) -> RenderResult:
     say = progress or (lambda f, m: None)
     t0 = time.time()
     W, H = spec.size
@@ -212,6 +213,18 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             out_words = [Word(w.w, round(w.s - start, 3), round(w.e - start, 3), w.p, w.spk)
                          for w in words if in_span(w, start, end) and not edl.is_filler(w.w)]
             cuts = [c - start for c in scene_cuts_src if start < c < end]
+        # loop ending: stop just after the last word, so the replay starts on the next beat rather than
+        # on dead air (a card or an outro needs the tail, so it stays then)
+        loop_trim = 0.0
+        if spec.loop_ending and out_words and not spec.cta_text and not spec.outro_key:
+            tight = round(max(w.e for w in out_words) + LOOP_TAIL, 3)
+            if LOOP_MIN_TRIM < duration - tight <= LOOP_MAX_TRIM and tight >= (min_duration or 0.0):
+                loop_trim = round(duration - tight, 3)
+                duration = tight
+                cuts = [c for c in cuts if c < duration]
+                if not edited:
+                    in_args = ["-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(src)]
+        summary["loop_trim"] = loop_trim
         bleeps = [(a2, b2) for a, b in bleep_src
                   if (a2 := (edl.map_time(pieces, a) if edited else a - start)) is not None
                   and (b2 := (edl.map_time(pieces, b) if edited else b - start)) is not None]
@@ -291,9 +304,12 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             k += 1
             return f"L{k}"
 
-        # punch-in: jump zoom on the hook or on emphasis words
+        # punch-in: jump zoom on the hook, on emphasis words, or alternating with the sentences
         zoom_ranges: list[tuple[float, float]] = []
-        if spec.punch_in == "hook":
+        zoom_changes: list[float] = []
+        if spec.punch_in == "rhythm":
+            zoom_ranges, zoom_changes = rhythm(out_words, plans, duration)
+        elif spec.punch_in == "hook":
             zoom_ranges = [(0.0, min(1.4, duration))]
         elif spec.punch_in == "emphasis":
             last = -10.0
@@ -419,21 +435,35 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
             wm_summary = {"key": cw.key, "sha256": digest, **place}
         graph.append(f"[{cur}]format=yuv420p[vout]")
         maps = ["-map", "[vout]"]
+        sfx_times: list[float] = []
         if has_audio:
             af = loudnorm_filter(in_args) + "," if spec.normalize_audio else ""
             # explicit output format: older ffmpeg (Debian 5.1) cannot negotiate a layout for
             # mono sources whose channel layout is unset
+            fmt = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
+            main = f"[0:a]{af}aresample=48000,{fmt}"
+            if loop_trim:   # the replay jumps back to the start: fade both ends so it doesn't click
+                main += f",afade=t=in:d=0.03,afade=t=out:st={max(0.0, duration - 0.04):.3f}:d=0.04"
+            extra: list[str] = []
             if bleeps:
                 on = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in bleeps)
-                graph.append(f"[0:a]{af}aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:"
-                             f"channel_layouts=stereo,volume=volume='if({on},0,1)':eval=frame[amain]")
-                graph.append(f"sine=frequency=1000:sample_rate=48000:duration={duration:.3f},"
-                             f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+                main += f",volume=volume='if({on},0,1)':eval=frame"
+                graph.append(f"sine=frequency=1000:sample_rate=48000:duration={duration:.3f},{fmt},"
                              f"volume=volume='if({on},0.25,0)':eval=frame[abeep]")
-                graph.append("[amain][abeep]amix=inputs=2:normalize=0:duration=first[aout]")
+                extra.append("[abeep]")
+            if spec.sfx:
+                sfx_times = sfx.spaced(cuts + zoom_changes, duration)
+                if sfx_times:
+                    inputs += ["-i", str(sfx.track(sfx_times, duration, tdir / "sfx.wav"))]
+                    graph.append(f"[{n_in}:a]{fmt}[asfx]")
+                    n_in += 1
+                    extra.append("[asfx]")
+            if extra:
+                graph.append(f"{main}[amain]")
+                graph.append("[amain]" + "".join(extra)
+                             + f"amix=inputs={1 + len(extra)}:normalize=0:duration=first[aout]")
             else:
-                graph.append(f"[0:a]{af}aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:"
-                             f"channel_layouts=stereo[aout]")
+                graph.append(f"{main}[aout]")
             maps += ["-map", "[aout]"]
         body = tdir / "body.mp4"
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs, "-filter_complex", ";".join(graph),
@@ -484,8 +514,41 @@ def compose(src: Path, start: float, end: float, words: list[Word], scene_cuts_s
                         {**summary, "scenes": [_scene_summary(p) for p in plans], "source_captions": source_captions,
                          "campaign_watermark": wm_summary, "bleeps": bleeps,
                          "caption_fixes": [f.model_dump() for f in spec.caption_fixes],
-                         "punch_in": zoom_ranges, "broll": [b.model_dump() for b in spec.broll]},
+                         "punch_in": zoom_ranges, "sfx": sfx_times, "broll": [b.model_dump() for b in spec.broll]},
                         srt, ass, thumb, out_words, time.time() - t0)
+
+
+LOOP_TAIL = 0.14        # seconds kept after the last word when the ending is tightened for the loop
+LOOP_MIN_TRIM = 0.05
+LOOP_MAX_TRIM = 0.6     # a longer tail is a reaction or a beat on purpose, not dead air
+RHYTHM_GAP = 2.5        # seconds the zoom holds before the next sentence may flip it
+RHYTHM_MODES = {"track", "center", "static"}   # full-frame shots; blur and split have their own framing
+
+
+def rhythm(words: list[Word], plans: list[layout.ScenePlan], duration: float
+           ) -> tuple[list[tuple[float, float]], list[float]]:
+    """Jump-zoom in and out on alternate sentences, the editing rhythm of cut-down talking heads: a
+    sentence start flips the zoom once it has held RHYTHM_GAP seconds. Zoom stays off in blur and
+    split scenes. Returns the zoomed ranges and the times the zoom changes."""
+    starts = [w.s for i, w in enumerate(words)
+              if i == 0 or words[i - 1].w.rstrip().endswith((".", "?", "!"))]
+    on, last, opened = False, 0.0, 0.0
+    spans: list[tuple[float, float]] = []
+    for t in starts[1:]:
+        if t - last < RHYTHM_GAP or t >= duration - 0.5:
+            continue
+        on, last = not on, t
+        if on:
+            opened = t
+        else:
+            spans.append((opened, t))
+    if on:
+        spans.append((opened, duration))
+    full = [(p.start, p.end) for p in plans if p.mode in RHYTHM_MODES]
+    ranges = [(round(max(a, c), 3), round(min(b, d), 3)) for a, b in spans for c, d in full
+              if min(b, d) - max(a, c) > 0.3]
+    changes = sorted({t for r in ranges for t in r if 0.0 < t < duration})
+    return ranges, changes
 
 
 def _scene_summary(p: layout.ScenePlan) -> dict[str, Any]:

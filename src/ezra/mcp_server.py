@@ -187,8 +187,8 @@ def ezra_rank_candidates(campaign: str | None = None, source_id: int | None = No
 @server.tool()
 def ezra_render_candidate(candidate_id: int, spec: dict[str, Any] | None = None) -> dict[str, Any]:
     """Queue a render. spec keys: aspect (9:16|1:1|16:9|4:5), layout (auto|track|split|blur|center),
-    caption_theme (clean|bold|karaoke|cinematic|minimal|high-impact), punch_in, remove_silence,
-    remove_fillers, cta_text, brand_kit_id, ..."""
+    caption_theme (clean|bold|karaoke|cinematic|minimal|high-impact), punch_in (rhythm|hook|emphasis|none),
+    sfx, loop_ending, remove_silence, remove_fillers, cta_text, brand_kit_id, ..."""
     if candidates.get(candidate_id).compliance_status == "FAIL":
         raise PermissionError("candidate fails campaign compliance")
     return _job(jobs.enqueue("render_candidate", {"candidate_id": candidate_id, "spec": spec}))

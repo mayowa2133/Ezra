@@ -166,9 +166,13 @@ version and confidence, and skipped on re-run unless `--force`:
 3. **Overlays**: the caption band is streamed as raw RGBA frames into ffmpeg (Pillow-drawn, seven
    themes including `pop`, matched to top Shorts; word-level highlight; optional colour emoji
    above captions with an illustratable word), hook card, logo, watermark, CTA end card,
-   punch-ins, B-roll.
+   punch-ins, B-roll. The default punch-in is `rhythm`: the zoom flips at a sentence start once it
+   has held 2.5 s, in full-frame shots only.
 4. **Audio**: voice compression + limiter, then two-pass loudnorm to −14 LUFS (true peak
-   ≤ −1 dBTP), 48 kHz stereo AAC.
+   ≤ −1 dBTP), 48 kHz stereo AAC. `sfx: true` mixes a synthesised whoosh (−24 dB, 1.2 s apart)
+   under cuts and zoom changes. `loop_ending` (on unless there is a CTA card or an outro) ends the
+   clip 0.14 s after the last word, trimming at most 0.6 s and never below the campaign minimum,
+   with short fades so the replay doesn't click.
 5. **Extras**: optional intro/outro, thumbnail pick (sharpest frame with a face), SRT and ASS
    sidecars.
 
