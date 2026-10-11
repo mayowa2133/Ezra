@@ -310,6 +310,8 @@ def _protect(sp: ScenePlan, overlays: Overlays | None, half: float, vertical: bo
             x1, ok1 = protect_x(shot.x1, boxes, half, slack)
             if ok1 and abs(x1 - min(max(shot.x1, half), 1 - half)) > 1e-6:
                 shot.x1, moved = x1, True
+            if not ok1 and any(b[2] - b[0] >= BIG_OVERLAY for b in _cut(shot.x1, half, boxes)):
+                stuck = True
         if not ok and any(b[2] - b[0] >= BIG_OVERLAY for b in _cut(shot.x, half, boxes)):
             stuck = True
     if stuck and auto and vertical:
