@@ -202,6 +202,9 @@ def _record_failure(job_id: int, exc: BaseException) -> None:
         permanent = isinstance(exc, (ValueError, LookupError, PermissionError)) or getattr(exc, "permanent", False)
         if not permanent and job.attempts < job.max_attempts:
             delay = min(300, 5 * 2 ** (job.attempts - 1))
+            retry_after = getattr(exc, "retry_after", None)
+            if isinstance(retry_after, int) and retry_after > 0:
+                delay = max(delay, min(retry_after, 31 * 24 * 60 * 60))
             job.status = "queued"
             job.run_after = utcnow() + timedelta(seconds=delay)
             job.message = f"attempt {job.attempts} failed ({error['type']}); retrying in {delay}s"

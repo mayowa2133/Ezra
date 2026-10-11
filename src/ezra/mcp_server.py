@@ -48,7 +48,9 @@ then learns from results. Workflow:
  5. Show the human the clips (title, rank, duration, compliance, expected value) and ASK which to
     approve. ezra_approve_clip / ezra_reject_clip only with the human's explicit choice.
  6. ezra_generate_metadata, then ezra_publish_clip (dry run) → confirm=true only after the human says yes.
-    YouTube: uploads are private-only until the Google project passes YouTube's audit; check
+    Buffer: store the API key locally as 'buffer', then ezra_buffer_channels / ezra_connect_buffer.
+    Media hosting must be configured (docs/BUFFER.md). Scheduled delivery is verified by ezra_refresh_posts.
+    Direct YouTube: uploads are private-only until the Google project passes YouTube's audit; check
     ezra_list_accounts (mode, can_manage). Scheduling uploads now with publishAt; follow a post with
     ezra_get_post (platform_state, error_code, warnings). Deleting needs the human's explicit request.
  7. ezra_sync_metrics, ezra_campaign_report / ezra_earnings_report, ezra_optimize_campaign.
@@ -279,6 +281,18 @@ def ezra_list_accounts(platform: str | None = None) -> list[dict[str, Any]]:
 def ezra_account_health(account_id: int, live: bool = False) -> dict[str, Any]:
     """One account's health; live=true also calls the platform (e.g. YouTube channel lookup)."""
     return publishing.account_health(account_id, check_live=live)
+
+
+@server.tool()
+def ezra_buffer_channels() -> list[dict[str, Any]]:
+    """Discover Buffer channels using the locally stored 'buffer' API key. Never returns the key."""
+    return publishing.buffer_channels()
+
+
+@server.tool()
+def ezra_connect_buffer(channel_ids: list[str] | None = None, timezone: str = "UTC") -> list[dict[str, Any]]:
+    """Import selected Buffer channels (all eligible channels when omitted). Does not publish posts."""
+    return publishing.connect_buffer(channel_ids, tz=timezone)
 
 
 @server.tool()

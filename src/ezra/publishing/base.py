@@ -41,9 +41,11 @@ class PublishError(RuntimeError):
 class RetryablePublishError(RetryableError):
     """Transient: rate limits, 5xx, dropped connections. Retried with backoff."""
 
-    def __init__(self, message: str, code: str = "transient", detail: dict[str, Any] | None = None):
+    def __init__(self, message: str, code: str = "transient", detail: dict[str, Any] | None = None,
+                 *, retry_after: int | None = None):
         super().__init__(message)
         self.code, self.detail = code, detail or {}
+        self.retry_after = retry_after
 
 
 @dataclass
@@ -59,6 +61,7 @@ class PostRequest:
     upload_state: dict[str, Any] = field(default_factory=dict)          # resume a previous attempt
     on_state: Callable[[dict[str, Any]], None] | None = None             # persist resumable state as it changes
     on_progress: Callable[[int, int], None] | None = None                # (bytes sent, total)
+    thumbnail_offset_ms: int | None = None  # select a video frame on supported platforms
 
 
 @dataclass
@@ -101,6 +104,10 @@ class Publisher(ABC):
         return None
 
     def metrics(self, account: dict[str, Any], external_id: str) -> MetricsResult | None:
+        return None
+
+    def preflight(self, account: dict[str, Any], visibility: str) -> None:
+        """Local configuration checks before a post is queued; no uploads or remote writes."""
         return None
 
     # --- OAuth (authorization-code + PKCE) ------------------------------------------------

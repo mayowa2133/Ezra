@@ -54,6 +54,8 @@ class Settings(BaseSettings):
 
     # --- external services (credentials live in env / secret store) -------
     openshorts_url: str = "http://localhost:8001"
+    buffer_media_base_url: str | None = Field(None, description="Public HTTPS base for the S3 bucket; only "
+                                             "buffer-media/ must be public. Otherwise use Cloudinary hosting.")
 
     # --- YouTube ------------------------------------------------------------
     youtube_public_allowed: bool = Field(False, description="The Google API project passed YouTube's audit, "

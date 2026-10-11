@@ -27,6 +27,7 @@ import httpx
 from .. import secrets
 from ..config import get_settings
 from .base import MetricsResult, PostRequest, Publisher, PublishError, PublishResult, expires, with_query
+from .buffer import BufferPublisher
 from .youtube import YouTubePublisher
 
 
@@ -291,7 +292,7 @@ def _int(v: Any) -> int | None:
 
 
 PUBLISHERS: dict[str, type[Publisher]] = {p.name: p for p in (
-    YouTubePublisher, TikTokPublisher, InstagramPublisher, UploadPostPublisher, LocalExportPublisher)}
+    YouTubePublisher, TikTokPublisher, InstagramPublisher, UploadPostPublisher, BufferPublisher, LocalExportPublisher)}
 
 
 def get_publisher(name: str, client: httpx.Client | None = None) -> Publisher:

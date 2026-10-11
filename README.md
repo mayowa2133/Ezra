@@ -77,6 +77,10 @@ No footage handy? `uv run ezra benchmark --fixtures podcast` synthesizes a 3-min
 interview (macOS `say` or espeak-ng), runs the whole pipeline on it, and leaves the video at
 `~/.cache/ezra/fixtures/podcast.mp4`, ready for `ezra source add`.
 
+To publish through Buffer without registering your own social platform developer apps,
+see [Buffer setup](docs/BUFFER.md). Connect your accounts in Buffer, store its API key, and import
+the channels into Ezra; the same approval, dry-run and compliance checks apply.
+
 Dashboard and API:
 
 ```bash

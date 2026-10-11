@@ -88,6 +88,13 @@ Instead of your own platform apps, you can post through https://upload-post.com:
 Their plan limits apply (the free plan has a small monthly upload quota, and some platforms need a
 paid tier).
 
+## Buffer (optional aggregator)
+
+Use [docs/BUFFER.md](docs/BUFFER.md) to connect Buffer accounts with one API key; separate
+YouTube/Meta/TikTok developer apps are not needed for this provider. Buffer requires stable public
+video hosting (Cloudinary credentials or a public S3 media prefix). The Integrations dashboard can
+save the Buffer key in the encrypted store, discover channels and import selected accounts.
+
 ## 5. Optional providers
 
 | Feature | Needs | Setup |
