@@ -703,3 +703,13 @@ def test_real_render_follows_a_play_across_a_panning_wide_shot(tmp_path):
     for t in (0.6, 3.0, 5.4):                          # the players at ~0.3, ~0.55 and ~0.8 of the source width
         kit = _mean(res.video, t, tmp_path, (0, 1000, 1080, 1400))
         assert kit[0] > kit[2] + 8, (t, kit)           # the yellow cluster is in the crop's play band
+
+
+def test_pan_endpoint_keeps_large_source_graphics_whole():
+    from ezra.render import layout
+
+    plan = layout.ScenePlan(0, 1, "track", shots=[layout.Shot(0, 1, 0.2, 0.7)])
+    box = (0.55, 0.1, 0.95, 0.2)
+    overlays = [(t, [box]) for t in (0.0, 0.5, 0.9)]
+    layout._protect(plan, overlays, half=0.15, vertical=True, auto=True)
+    assert plan.mode == "blur" and plan.protected == "shown whole"
