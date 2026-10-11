@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:lint-deps": "node --test tests/next-lint-glob.test.mjs"
   },
   "dependencies": {
     "next": "^16.3.8",
@@ -21,5 +22,10 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.8",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "@next/eslint-plugin-next": {
+      "fast-glob": "npm:tinyglobby@0.2.17"
+    }
   }
 }
