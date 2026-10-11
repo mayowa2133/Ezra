@@ -101,6 +101,7 @@ def processed_home(tmp_path_factory, fixture_video):
     mp = pytest.MonkeyPatch()
     mp.setenv("EZRA_HOME", str(home))
     mp.setenv("EZRA_SECRET_KEY", "test-secret-key")
+    mp.setenv("EZRA_LLM", "heuristic")  # session setup runs before the per-test environment fixture
     mp.setenv("EZRA_JOB_ISOLATION", "false")
     mp.setenv("EZRA_WHISPER_MODEL", "base")
     mp.setenv("EZRA_MODEL_CACHE", str(MODEL_CACHE))
