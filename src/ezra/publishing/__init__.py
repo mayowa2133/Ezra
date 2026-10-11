@@ -101,6 +101,10 @@ def account_dict(a: PublishAccount) -> dict[str, Any]:
 def connect_start(provider: str, redirect_uri: str | None = None) -> dict[str, Any]:
     """Begin OAuth: returns the platform consent URL (state + PKCE stored)."""
     pub = _publisher(provider)
+    if provider == "buffer":
+        return {"authorize_url": "https://publish.buffer.com", "method": "api_key",
+                "instructions": "Connect social accounts in Buffer, store its API key as 'buffer', "
+                                "then use ezra accounts buffer-connect (docs/BUFFER.md)"}
     redirect_uri = redirect_uri or f"{get_settings().public_url}/api/integrations/{provider}/callback"
     verifier, challenge = pkce_pair()
     state = security.new_oauth_state(provider, code_verifier=verifier)
@@ -134,6 +138,36 @@ def connect_finish(provider: str, code: str, state: str, redirect_uri: str | Non
 
 
 # --- publishing -----------------------------------------------------------------------------
+
+def buffer_channels(credential_ref: str = "buffer") -> list[dict[str, Any]]:
+    from .buffer import BufferPublisher
+
+    return BufferPublisher(_http_client).channels(credential_ref)
+
+
+def connect_buffer(channel_ids: list[str] | None = None, credential_ref: str = "buffer",
+                   tz: str = "UTC") -> list[dict[str, Any]]:
+    """Import selected Buffer channels. Only a secret reference is stored in account rows."""
+    channels = buffer_channels(credential_ref)
+    if channel_ids is not None:
+        missing = set(channel_ids) - {c["channel_id"] for c in channels}
+        if missing:
+            raise ValueError(f"Buffer channel IDs not found: {sorted(missing)}")
+        channels = [c for c in channels if c["channel_id"] in channel_ids]
+    out = []
+    for channel in channels:
+        if not channel["connected"] or channel["locked"]:
+            continue
+        # Channel ID keeps identities stable across handle renames and distinct across organizations.
+        existing = next((a for a in list_accounts(channel["platform"]) if a.provider == "buffer"
+                         and (a.meta or {}).get("channel_id") == channel["channel_id"]), None)
+        handle = f"{channel['handle']} ({channel['channel_id']})"
+        account = add_account(channel["platform"], "buffer", existing.handle if existing else handle,
+                              credential_ref, tz, channel)
+        audit.record("account.connected", "publish_account", account.id, provider="buffer",
+                     channel_id=channel["channel_id"])
+        out.append(account_dict(account))
+    return out
 
 def _default_account(platform: str) -> PublishAccount:
     # an account that needs reconnecting is still chosen, so the dry run can say so plainly
@@ -243,6 +277,12 @@ def publish_clip(clip_id: int, platforms: list[str] | None = None, account_ids: 
             problems.append(str(e))
             continue
         pub = PUBLISHERS[acc.provider]
+        if acc.platform != p or p not in pub.platforms:
+            problems.append(f"account {acc.id} cannot publish to {p}")
+        try:
+            _publisher(acc.provider).preflight(_account_ctx(acc), visibility)
+        except PublishError as e:
+            problems.append(f"{p}: {e}")
         if visibility != "public" and not pub.supports_private and p == "instagram":
             problems.append("instagram: no private posts; leave it out of a private test")
         if acc.provider == "youtube" and (visibility == "public" or schedule_at) \
@@ -359,8 +399,9 @@ def run_publish(post_id: int, final_attempt: bool = True,
                       visibility=post.visibility,
                       scheduled_at=db.aware(post.scheduled_at) if pub.supports_scheduling else None,
                       thumbnail=st.local_path(v.thumbnail_key) if v.thumbnail_key else None,
+                      thumbnail_offset_ms=(v.spec or {}).get("thumbnail_offset_ms"),
                       upload_state=upload_state, on_state=save_state, on_progress=on_progress)
-    account = account_dict(acc) | {"credential_ref": acc.credential_ref, "meta": acc.meta or {}}
+    account = _account_ctx(acc)
     audit.record("post.upload_started", "post", post_id, provider=acc.provider, resumed=bool(upload_state))
     try:
         res = pub.publish(account, req, post.platform)
@@ -399,7 +440,8 @@ def run_publish(post_id: int, final_attempt: bool = True,
         if res.status == "published":
             p.published_at = utcnow()
         c = s.get(Clip, p.clip_id)
-        if c is not None and p.visibility == "public" and res.status in ("published", "scheduled"):
+        if c is not None and p.visibility == "public" and (res.status == "published"
+                or (res.status == "scheduled" and acc.provider != "buffer")):
             c.status = "published"
     audit.record("post.published" if res.status == "published" else "post.submitted", "post", post_id,
                  provider=acc.provider, external_id=res.external_id, url=res.url, platform_state=res.platform_state,
@@ -412,7 +454,7 @@ def _account_ctx(acc: PublishAccount) -> dict[str, Any]:
     return account_dict(acc) | {"credential_ref": acc.credential_ref, "meta": acc.meta or {}}
 
 
-def refresh_statuses() -> list[dict[str, Any]]:
+def refresh_statuses(*, automatic: bool = False) -> list[dict[str, Any]]:
     """Resolve posts still processing on the platform side, and YouTube uploads whose platform state
     can still change (processing, or scheduled and due)."""
     out = []
@@ -420,20 +462,36 @@ def refresh_statuses() -> list[dict[str, Any]]:
         pending = list(s.scalars(select(Post).where(Post.external_id.is_not(None), or_(
             Post.status == "publishing",
             and_(Post.provider == "youtube", Post.platform_state == "processing"),
-            and_(Post.provider == "youtube", Post.status == "scheduled", Post.scheduled_at <= utcnow())))))
+            and_(Post.provider == "youtube", Post.status == "scheduled", Post.scheduled_at <= utcnow()),
+            and_(Post.provider == "buffer", Post.status == "scheduled")))))
     for post in pending:
+        if automatic and post.provider == "buffer":
+            from .scheduler import BUFFER_STATUS_EVERY
+
+            due = db.aware(post.scheduled_at)
+            if post.status == "scheduled" and due is not None and due > utcnow():
+                continue
+            state = dict(post.upload_state or {})
+            checked = state.get("buffer_status_checked_at")
+            if checked and datetime.fromisoformat(checked) > utcnow() - BUFFER_STATUS_EVERY:
+                continue
+            state["buffer_status_checked_at"] = utcnow().isoformat()
+            with db.session() as s:
+                row = s.get(Post, post.id)
+                assert row is not None
+                row.upload_state = state
         acc = _get_account(post.account_id) if post.account_id else None
         if acc is None:
             continue
         pub = _publisher(acc.provider)
         try:
-            res = pub.refresh_status(_account_ctx(acc), post.external_id)
+            res = pub.refresh_status(_account_ctx(acc) | {"_visibility": post.visibility}, post.external_id)
         except PublishError as e:
             with db.session() as s:
                 p = s.get(Post, post.id)
                 assert p is not None
                 p.error, p.error_code = str(e)[:2000], getattr(e, "code", "publish_error")
-                if post.status == "publishing":
+                if post.status == "publishing" or post.provider == "buffer":
                     p.status = "failed"
             out.append({"post_id": post.id, "status": "failed", "error_code": getattr(e, "code", None)})
             continue
@@ -450,11 +508,15 @@ def refresh_statuses() -> list[dict[str, Any]]:
             elif res.status in ("failed", "rejected"):
                 p.status, p.error_code = "failed", res.status
             elif res.status == "published" and p.status in ("publishing", "scheduled"):
-                if p.status == "scheduled" and res.platform_state != "public":
+                if p.status == "scheduled" and res.platform_state != "public" and post.provider != "buffer":
                     pass                                   # not flipped yet
                 else:
                     p.status, p.url = "published", res.url or p.url
                     p.published_at = p.published_at or utcnow()
+                    if post.provider == "buffer" and p.visibility == "public":
+                        c = s.get(Clip, p.clip_id)
+                        if c is not None:
+                            c.status = "published"
             changed = before != (p.status, p.platform_state)
         if changed:
             out.append({"post_id": post.id, "status": p.status, "platform_state": p.platform_state, "url": res.url})
@@ -471,6 +533,11 @@ def cancel_post(post_id: int, actor: str = "user") -> Post:
         acc = _get_account(post.account_id)  # type: ignore[arg-type]
         _youtube().update_video(_account_ctx(acc), post.external_id,
                                            publish_at=None)
+    if post.provider == "buffer" and post.external_id:
+        from .buffer import BufferPublisher
+
+        acc = _get_account(post.account_id)  # type: ignore[arg-type]
+        BufferPublisher(_http_client).cancel(_account_ctx(acc), post.external_id)
     with db.session() as s:
         p = s.get(Post, post_id)
         assert p is not None
@@ -490,6 +557,11 @@ def reschedule_post(post_id: int, when: datetime | str, tz: str | None = None, a
         acc = _get_account(post.account_id)  # type: ignore[arg-type]
         _youtube().update_video(_account_ctx(acc), post.external_id,
                                            publish_at=new)
+    if post.provider == "buffer" and post.external_id:
+        from .buffer import BufferPublisher
+
+        acc = _get_account(post.account_id)  # type: ignore[arg-type]
+        BufferPublisher(_http_client).reschedule(_account_ctx(acc), post.external_id, new)
     with db.session() as s:
         p = s.get(Post, post_id)
         assert p is not None
@@ -548,15 +620,15 @@ def delete_post(post_id: int, confirm: bool = False, actor: str = "user") -> dic
 def account_health(account_id: int, check_live: bool = False) -> dict[str, Any]:
     """What the dashboard, CLI and MCP show for a connected account. Never returns token values."""
     acc = _get_account(account_id)
-    tok = secrets.get(acc.credential_ref) if acc.credential_ref else None
-    tok = tok if isinstance(tok, dict) else {}
+    credential = secrets.get(acc.credential_ref) if acc.credential_ref else None
+    tok = credential if isinstance(credential, dict) else {}
     scopes = (acc.meta or {}).get("scopes") or tok.get("scopes") or []
     from .youtube import ANALYTICS, MANAGE, UPLOAD
 
     out: dict[str, Any] = {
         "account_id": acc.id, "platform": acc.platform, "provider": acc.provider, "handle": acc.handle,
         "status": acc.status, "channel_id": (acc.meta or {}).get("channel_id"),
-        "has_token": bool(tok), "has_refresh_token": bool(tok.get("refresh_token")),
+        "has_token": bool(credential), "has_refresh_token": bool(tok.get("refresh_token")),
         "access_expires_at": datetime.fromtimestamp(tok["expires_at"], tz=UTC).isoformat()
         if tok.get("expires_at") else None,
         "scopes": scopes,
@@ -565,6 +637,16 @@ def account_health(account_id: int, check_live: bool = False) -> dict[str, Any]:
         out.update(can_upload=UPLOAD in scopes, can_read_analytics=ANALYTICS in scopes,
                    can_manage=MANAGE in scopes,
                    mode="public allowed (audited)" if get_settings().youtube_public_allowed else "private only")
+    if acc.provider == "buffer":
+        out["media_configured"] = bool(get_settings().buffer_media_base_url or secrets.get("cloudinary"))
+        if check_live:
+            try:
+                channel = next((c for c in buffer_channels(acc.credential_ref or "buffer")
+                                if c["channel_id"] == (acc.meta or {}).get("channel_id")), None)
+                out["live_check"] = {"ok": bool(channel and channel["connected"] and not channel["locked"]
+                                                and not channel["queue_paused"]), "channel": channel}
+            except (PublishError, jobs.RetryableError, httpx.TransportError) as e:
+                out["live_check"] = {"ok": False, "error_code": getattr(e, "code", None), "error": str(e)[:300]}
     if check_live and acc.provider == "youtube":
         try:
             ch = _youtube().channel(_account_ctx(acc))

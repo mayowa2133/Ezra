@@ -242,6 +242,35 @@ def test_title_cards_move_off_a_fit_shot(tmp_path):
     assert moved and y + half <= top                          # the whole card sits above the picture
 
 
+def test_a_shot_can_move_the_caption_band(tmp_path):
+    # dark footage, so only the caption is bright; the second shot asks for its captions near the top
+    for name in ("a.mp4", "b.mp4"):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x202020:s=1280x720:r=30:d=2",
+                        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(tmp_path / name)],
+                       check=True)
+    sr = 24000
+    with wave.open(str(tmp_path / "nar.wav"), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(b"\x00\x00" * (2 * sr))
+    tl = story.Timeline(
+        shots=[story.Shot("a.mp4", 0.0, 0.0, focus="center"),
+               story.Shot("b.mp4", 0.0, 1.0, focus="center", caption_y=0.2)],
+        end=2.0, narration="nar.wav", black=0.0, base=str(tmp_path),
+        words=[{"w": "Lower", "s": 0.1, "e": 0.8}, {"w": "Upper", "s": 1.1, "e": 1.8}])
+    story.render(tl, tmp_path / "out.mp4")
+
+    def bright(t: float, y: int) -> float:
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(tmp_path / "out.mp4"),
+                              "-frames:v", "1", "-vf", f"crop=1080:200:0:{y},format=gray", "-f", "rawvideo", "-"],
+                             capture_output=True).stdout
+        return float((np.frombuffer(raw, np.uint8) > 235).mean())
+    low, high = int(1920 * 0.70) - 100, int(1920 * 0.20) - 100
+    assert bright(0.4, low) > 0.005 and bright(0.4, high) < 0.001      # shot 1: the usual place
+    assert bright(1.4, high) > 0.005 and bright(1.4, low) < 0.001      # shot 2: moved up
+
+
 def _bursts(spans: list[tuple[float, float]], length: float) -> np.ndarray:
     sr = narration.SR
     x = np.zeros(int(length * sr), np.float32)

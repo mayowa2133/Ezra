@@ -6,6 +6,7 @@ import { ErrorNote } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 
 import { YouTubePanel } from "./YouTubePanel";
+import { BufferPanel } from "./BufferPanel";
 
 type Integrations = {
   publishers: { provider: string; platforms: string[]; oauth: boolean; configured: boolean; env_var: string | null }[];
@@ -36,6 +37,9 @@ export default function IntegrationsPage() {
         <>
           <YouTubePanel accounts={data.accounts} onChange={() => void reload()}
             configured={data.publishers.find((p) => p.provider === "youtube")?.configured ?? false} />
+          <BufferPanel onChange={() => void reload()}
+            cloudinaryConfigured={data.secrets_present.includes("cloudinary")}
+            configured={data.publishers.find((p) => p.provider === "buffer")?.configured ?? false} />
           <div className="panel">
             <h2 style={{ marginTop: 0 }}>Publishing</h2>
             <table>

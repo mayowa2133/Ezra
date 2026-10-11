@@ -537,6 +537,14 @@ def accounts_connect(provider: str,
                      browser: bool = typer.Option(True, help="Open the consent page in the browser")) -> None:
     """Connect youtube | tiktok | instagram with OAuth. By default a one-shot listener on 127.0.0.1
     receives the redirect, so the API doesn't need to be running (a Google "Desktop app" client)."""
+    if provider == "buffer":
+        console.print("Connect your social accounts at https://publish.buffer.com, then store the key with "
+                      "`ezra secrets set buffer` and run `ezra accounts buffer-connect`. See docs/BUFFER.md.")
+        if browser:
+            import webbrowser
+
+            webbrowser.open("https://publish.buffer.com")
+        return
     if via_api:
         out = publishing.connect_start(provider)
         console.print(f"Open this URL to authorize (redirects to {out['redirect_uri']}; the API must be running):\n"
@@ -626,6 +634,19 @@ def post_delete(post_id: int, yes: bool = False) -> None:
     console.print_json(data=publishing.delete_post(post_id))
     if yes or console.input("Delete it permanently on YouTube? [y/N] ").strip().lower() in ("y", "yes"):
         console.print_json(data=publishing.delete_post(post_id, confirm=True, actor="cli"))
+
+
+@accounts_app.command("buffer-channels")
+def accounts_buffer_channels(credential_ref: str = "buffer") -> None:
+    """List Buffer channels without importing accounts or publishing anything."""
+    console.print_json(data=publishing.buffer_channels(credential_ref))
+
+
+@accounts_app.command("buffer-connect")
+def accounts_buffer_connect(channel: list[str] | None = typer.Option(None, "--channel"),
+                            credential_ref: str = "buffer", tz: str = "UTC") -> None:
+    """Import all eligible Buffer channels, or select with repeated --channel IDs."""
+    console.print_json(data=publishing.connect_buffer(channel, credential_ref, tz))
 
 
 @secrets_app.command("set")

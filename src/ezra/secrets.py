@@ -20,6 +20,8 @@ from typing import Any
 from .config import get_settings
 
 ENV_ALIASES = {
+    "buffer": "BUFFER_API_KEY",
+    "cloudinary": "EZRA_CLOUDINARY_JSON",
     "upload-post": "UPLOAD_POST_API_KEY",
     "youtube-client": "YOUTUBE_CLIENT_SECRET_JSON",
     "tiktok-client": "TIKTOK_CLIENT_JSON",
@@ -68,9 +70,14 @@ def _load() -> dict[str, Any]:
 
 
 def get(ref: str) -> Any | None:
+    # BaseSettings reads .env; the secret store must also see aliases saved there.
+    from dotenv import dotenv_values
+
+    file_env = dotenv_values(".env")
     for name in (_env_name(ref), ENV_ALIASES.get(ref)):
-        if name and os.environ.get(name):
-            raw = os.environ[name]
+        if name and (os.environ.get(name) or file_env.get(name)):
+            raw = os.environ.get(name) or file_env[name]
+            assert raw is not None
             try:
                 return json.loads(raw) if raw.strip().startswith(("{", "[")) else raw
             except json.JSONDecodeError:
@@ -111,7 +118,7 @@ def refs() -> list[str]:
     names = set()
     with _lock:
         names |= set(_load())
-    for ref, env in ENV_ALIASES.items():
-        if os.environ.get(env):
+    for ref in ENV_ALIASES:
+        if get(ref) is not None:
             names.add(ref)
     return sorted(names)

@@ -112,7 +112,7 @@ def publish_post(ctx: JobContext) -> dict[str, Any]:
 def refresh_post_status(ctx: JobContext) -> dict[str, Any]:
     from . import publishing
 
-    return {"updated": publishing.refresh_statuses()}
+    return {"updated": publishing.refresh_statuses(automatic=True)}
 
 
 @task("sync_metrics")

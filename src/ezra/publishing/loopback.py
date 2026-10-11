@@ -64,10 +64,12 @@ def connect(provider: str, port: int, open_browser: bool = True, timeout: float 
 
     redirect = f"http://127.0.0.1:{port}/callback"
     start = connect_start(provider, redirect_uri=redirect)
-    show(f"Open this URL to authorize (it was opened in your browser):\n{start['authorize_url']}")
-    if open_browser:
-        webbrowser.open(start["authorize_url"])
-    params = wait_for_code(port, timeout)
+    def ready(_url: str) -> None:
+        show(f"Open this URL to authorize (it was opened in your browser):\n{start['authorize_url']}")
+        if open_browser:
+            webbrowser.open(start["authorize_url"])
+
+    params = wait_for_code(port, timeout, on_ready=ready)
     if "code" not in params:
         raise RuntimeError(f"authorization failed: {params.get('error', 'no code returned')}")
     return connect_finish(provider, params["code"], params.get("state", ""), redirect_uri=redirect)

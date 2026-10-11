@@ -24,7 +24,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from .. import (
     analysis,
@@ -756,7 +756,7 @@ def integrations() -> dict[str, Any]:
 
     have = set(secrets.refs())
     # the credential each publisher needs before it can post (local-export needs none)
-    needs = {n: p.client_secret_ref or ("upload-post" if n == "upload-post" else None) for n, p in PUBLISHERS.items()}
+    needs = {n: p.client_secret_ref or (n if n in ("upload-post", "buffer") else None) for n, p in PUBLISHERS.items()}
     return {"publishers": [{"provider": n, "platforms": list(p.platforms),
                             "oauth": p.client_secret_ref is not None,
                             "configured": needs[n] is None or needs[n] in have,
@@ -766,6 +766,58 @@ def integrations() -> dict[str, Any]:
             "secrets_present": sorted(have), "accounts": accounts(),
             "llm": get_settings().llm, "llm_active": llm.get_llm().name, "transcriber": get_settings().transcriber,
             "diarizer": get_settings().diarizer, "face_detector": get_settings().face_detector}
+
+
+@app.get("/api/integrations/buffer/channels", dependencies=[Auth])
+def buffer_channels() -> list[dict[str, Any]]:
+    return publishing.buffer_channels()
+
+
+class BufferConnectBody(BaseModel):
+    channel_ids: list[str] | None = None
+    timezone: str = "UTC"
+
+
+class BufferCredentialsBody(BaseModel):
+    api_key: SecretStr
+
+
+class BufferMediaCredentialsBody(BaseModel):
+    cloud_name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    api_key: SecretStr
+    api_secret: SecretStr
+
+
+@app.post("/api/integrations/buffer/credentials", dependencies=[Auth])
+def buffer_credentials(body: BufferCredentialsBody) -> dict[str, bool]:
+    key = body.api_key.get_secret_value().strip()
+    if not key:
+        raise ValueError("Buffer API key is required")
+    if any(c.isspace() for c in key):
+        raise ValueError("Buffer API keys do not contain spaces; copy the secret value from Buffer")
+    if not get_settings().secret_key:
+        raise ValueError("Set EZRA_SECRET_KEY before saving credentials")
+    secrets.put("buffer", key)
+    audit.record("secret.updated", "secret", "buffer", actor="api")
+    return {"configured": True}
+
+
+@app.post("/api/integrations/buffer/media-credentials", dependencies=[Auth])
+def buffer_media_credentials(body: BufferMediaCredentialsBody) -> dict[str, bool]:
+    values = {"cloud_name": body.cloud_name, "api_key": body.api_key.get_secret_value().strip(),
+              "api_secret": body.api_secret.get_secret_value().strip()}
+    if not all(values.values()):
+        raise ValueError("All Cloudinary credentials are required")
+    if not get_settings().secret_key:
+        raise ValueError("Set EZRA_SECRET_KEY before saving credentials")
+    secrets.put("cloudinary", values)
+    audit.record("secret.updated", "secret", "cloudinary", actor="api")
+    return {"configured": True}
+
+
+@app.post("/api/integrations/buffer/connect", dependencies=[Auth])
+def connect_buffer(body: BufferConnectBody) -> list[dict[str, Any]]:
+    return publishing.connect_buffer(body.channel_ids, tz=body.timezone)
 
 
 @app.get("/api/integrations/{provider}/connect", dependencies=[Auth])
