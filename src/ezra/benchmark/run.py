@@ -535,8 +535,10 @@ class _Home:
         from ..config import reset_settings
 
         os.environ["EZRA_HOME"] = str(self.home)
-        for k in ("EZRA_DATABASE_URL", "EZRA_STORAGE", "EZRA_LLM"):
+        for k in ("EZRA_DATABASE_URL", "EZRA_STORAGE"):
             os.environ.pop(k, None)
+        # Regression measurements must not depend on installed/signed-in model CLIs.
+        os.environ["EZRA_LLM"] = "heuristic"
         os.environ.setdefault("EZRA_SECRET_KEY", "benchmark-only")
         os.environ["EZRA_JOB_ISOLATION"] = "false"
         os.environ.setdefault("EZRA_MODEL_CACHE", str(Path.home() / ".cache" / "ezra" / "models"))

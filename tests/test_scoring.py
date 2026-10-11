@@ -326,3 +326,31 @@ def test_find_candidates_shortlists_model_proposals_first(tiny_video, monkeypatc
     everything = candidates.list_candidates(source_id=src.id, include_failed=True)
     assert len(again) == len(everything) == 5                 # a re-run replaces unrendered model picks
     assert sum(c.origin == "model" for c in everything) == 1
+
+
+def test_fit_range_finishes_sentence_when_extending_short_proposal():
+    from ezra.candidates import _fit_range
+
+    segs = _sentences(5)
+    segs[2].sentence_end = False
+    assert _fit_range(segs, 0, 0, 15, 30) == (0, 3)
+    assert _fit_range(segs, 0, 0, 15, 20) is None
+    segs[-1].sentence_end = False
+    assert _fit_range(segs, 4, 4, 1, 30) is None
+
+
+def test_malformed_model_proposals_preserve_valid_moments(monkeypatch):
+    from ezra import candidates, llm
+
+    malformed = [None, "bad", {}, {"from": "one", "to": 3}, {"from": True, "to": 3}]
+    malformed += [{"from": 1, "to": 3, "strength": s} for s in (None, "strong", float("nan"),
+                                                                               float("inf"), -1, 101)]
+    valid = {"from": 1, "to": 3, "strength": 80}
+    monkeypatch.setattr(llm, "call", lambda *a, **k: llm.LLMResult(
+        {"moments": malformed + [valid]}, "fake", None, 0.1, {}))
+    out = candidates._propose_chunk(1, _sentences(10), 0, 10, None, None, [], 15, 60)
+    assert len(out) == 1 and out[0]["strength"] == 80
+    for moments in (None, "bad", {}):
+        monkeypatch.setattr(llm, "call", lambda *a, moments=moments, **k: llm.LLMResult(
+            {"moments": moments}, "fake", None, 0.1, {}))
+        assert candidates._propose_chunk(1, _sentences(10), 0, 10, None, None, [], 15, 60) == []
