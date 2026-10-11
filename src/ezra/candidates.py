@@ -13,6 +13,7 @@ Nothing is rendered here; renders cost minutes, candidates cost milliseconds.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from typing import Any
@@ -264,10 +265,11 @@ def _fit_range(segments: list[Segment], i: int, j: int, min_d: float, max_d: flo
         j -= 1
         while j > i and not segments[j].sentence_end:
             j -= 1
-    while j < len(segments) - 1 and segments[j].end - segments[i].start < min_d - 0.5:
+    while j < len(segments) - 1 and (segments[j].end - segments[i].start < min_d - 0.5
+                                    or not segments[j].sentence_end):
         j += 1
     dur = segments[j].end - segments[i].start
-    return (i, j) if min_d - 0.5 <= dur <= max_d + 0.5 else None
+    return (i, j) if segments[j].sentence_end and min_d - 0.5 <= dur <= max_d + 0.5 else None
 
 
 def _propose_chunk(source_id: int, segments: list[Segment], lo: int, hi: int, camp: Campaign | None,
@@ -290,14 +292,22 @@ def _propose_chunk(source_id: int, segments: list[Segment], lo: int, hi: int, ca
 
         logging.getLogger("ezra.proposer").warning("proposer chunk skipped (%s); heuristic windows kept", e)
         return []
-    out = []
-    for m in res.data.get("moments", []):
-        i, j = lo + int(m.get("from", 0)) - 1, lo + int(m.get("to", 0)) - 1
+    out: list[dict[str, Any]] = []
+    moments = res.data.get("moments")
+    if not isinstance(moments, list):
+        return out
+    for m in moments:
+        if not isinstance(m, dict) or type(m.get("from")) is not int or type(m.get("to")) is not int:
+            continue
+        strength = m.get("strength", 50)
+        if type(strength) not in (int, float) or not math.isfinite(strength) or not 0 <= strength <= 100:
+            continue
+        i, j = lo + m["from"] - 1, lo + m["to"] - 1
         if not (lo <= i <= j < hi):
             continue
         fitted = _fit_range(segments, i, j, min_d, max_d)
         if fitted:
-            out.append({"i": fitted[0], "j": fitted[1], "strength": float(m.get("strength", 50)),
+            out.append({"i": fitted[0], "j": fitted[1], "strength": float(strength),
                         "hook_text": str(m.get("hook_text") or "").strip(),
                         "reason": str(m.get("reason") or "").strip(), "provider": res.provider})
     return out
