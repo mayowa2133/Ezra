@@ -4,6 +4,10 @@ titles, captions, rule extraction, performance narratives).
 Ezra is not tied to one model company, and it does not call a hosted model API
 by default. Providers:
 
+  auto (default)     claude-cli when `claude` is on PATH, else codex-cli when
+                     `codex` is, else heuristic. A CLI that fails to sign in is
+                     dropped for the rest of the process, so a logged-out CLI
+                     costs one failed call, not one per batch.
   heuristic          no model. Every caller has a deterministic fallback, so the
                      whole pipeline runs with this setting (tests, CI, offline).
   claude-cli         Claude Code in headless mode (`claude -p --json-schema`),
@@ -19,6 +23,7 @@ in cost accounting.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -88,6 +93,19 @@ def _validate(data: Any, schema: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+_SIGNED_OUT: dict[str, str] = {}      # provider → why it can't sign in (process lifetime)
+_AUTH_ERROR = re.compile(r"\b401\b|unauthori[sz]ed|not (logged|signed) in|/login|invalid api key|"
+                         r"authentication|please log ?in", re.I)
+
+
+def _auth_failed(provider: str, message: str) -> bool:
+    """Remember a sign-in failure so the remaining calls fall back without trying again."""
+    if _AUTH_ERROR.search(message):
+        _SIGNED_OUT[provider] = message[-200:]
+        return True
+    return False
+
+
 class ClaudeCLIProvider(LLMProvider):
     name = "claude-cli"
 
@@ -96,7 +114,7 @@ class ClaudeCLIProvider(LLMProvider):
 
     @property
     def available(self) -> bool:
-        return shutil.which("claude") is not None
+        return shutil.which("claude") is not None and self.name not in _SIGNED_OUT
 
     def complete_json(self, system: str, prompt: str, schema: dict[str, Any], task: str) -> LLMResult:
         if not self.available:
@@ -112,10 +130,16 @@ class ClaudeCLIProvider(LLMProvider):
         except subprocess.TimeoutExpired as e:
             raise LLMError(f"claude timed out after {CLI_TIMEOUT}s") from e
         if out.returncode != 0:
-            raise LLMError(f"claude exited {out.returncode}: {(out.stderr or out.stdout).strip()[-600:]}")
+            message = (out.stderr or out.stdout).strip()[-600:]
+            if _auth_failed(self.name, message):
+                raise LLMUnavailable(f"claude is not signed in (run `claude` → /login): {message[-200:]}")
+            raise LLMError(f"claude exited {out.returncode}: {message}")
         payload = json.loads(out.stdout)
         if payload.get("is_error"):
-            raise LLMError(f"claude error: {payload.get('result') or payload.get('subtype')}")
+            message = str(payload.get("result") or payload.get("subtype"))
+            if _auth_failed(self.name, message):
+                raise LLMUnavailable(f"claude is not signed in (run `claude` → /login): {message[-200:]}")
+            raise LLMError(f"claude error: {message}")
         data = payload.get("structured_output")
         if data is None:
             raise LLMError("claude returned no structured_output")
@@ -134,7 +158,7 @@ class CodexCLIProvider(LLMProvider):
 
     @property
     def available(self) -> bool:
-        return shutil.which("codex") is not None
+        return shutil.which("codex") is not None and self.name not in _SIGNED_OUT
 
     def complete_json(self, system: str, prompt: str, schema: dict[str, Any], task: str) -> LLMResult:
         if not self.available:
@@ -154,6 +178,9 @@ class CodexCLIProvider(LLMProvider):
             except subprocess.TimeoutExpired as e:
                 raise LLMError(f"codex timed out after {CLI_TIMEOUT}s") from e
             if out.returncode != 0 or not last.exists():
+                if _auth_failed(self.name, (out.stderr or out.stdout).strip()[-600:]):
+                    raise LLMUnavailable(f"codex is not signed in (run `codex login`): "
+                                         f"{(out.stderr or out.stdout).strip()[-200:]}")
                 raise LLMError(f"codex exited {out.returncode}: {(out.stderr or out.stdout).strip()[-600:]}")
             data = json.loads(last.read_text())
         return LLMResult(_validate(data, schema), self.name, self.model, time.time() - t0)
@@ -212,7 +239,8 @@ PROVIDERS: dict[str, type[LLMProvider]] = {
 }
 
 
-AGENTS = {"claude": "claude-cli", "codex": "codex-cli", "local": "openai-compatible", "none": "heuristic"}
+AGENTS = {"claude": "claude-cli", "codex": "codex-cli", "local": "openai-compatible", "none": "heuristic",
+          "auto": "auto"}
 _override: str | None = None
 
 
@@ -223,7 +251,7 @@ def using(provider: str | None) -> Iterator[None]:
     global _override
     previous = _override
     _override = AGENTS.get(provider, provider) if provider else previous
-    if _override is not None and _override not in PROVIDERS:
+    if _override is not None and _override not in PROVIDERS and _override != "auto":
         _override = previous
         raise ValueError(f"unknown agent/provider {provider!r}; use one of {sorted(AGENTS) + sorted(PROVIDERS)}")
     try:
@@ -232,8 +260,18 @@ def using(provider: str | None) -> Iterator[None]:
         _override = previous
 
 
+def resolve_auto() -> str:
+    """The provider `auto` means here: a signed-in local CLI if there is one, else no model."""
+    for provider in ("claude-cli", "codex-cli"):
+        if PROVIDERS[provider]().available:
+            return provider
+    return "heuristic"
+
+
 def get_llm(name: str | None = None) -> LLMProvider:
     name = name or _override or get_settings().llm
+    if name == "auto":
+        name = resolve_auto()
     if name not in PROVIDERS:
         raise ValueError(f"unknown LLM provider {name!r}; available: {sorted(PROVIDERS)}")
     return PROVIDERS[name]()

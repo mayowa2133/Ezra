@@ -89,7 +89,7 @@ open http://localhost:3000
 | YuNet faces (default `auto`) | nothing: the 227 KB model downloads to `EZRA_MODEL_CACHE` on first use | Falls back to Haar offline; `EZRA_FACE_DETECTOR=haar` to skip it |
 | PP-OCRv3 text (default `auto`) | nothing: the 2.4 MB model downloads to `EZRA_MODEL_CACHE` on first render | Falls back to the morphological detector offline; `EZRA_TEXT_DETECTOR=morph` to skip it |
 | MediaPipe faces | `uv sync --extra local --extra mediapipe`, `EZRA_FACE_DETECTOR=mediapipe` | Downloads the BlazeFace model |
-| Model critique | `EZRA_LLM=claude-cli` / `codex-cli` / `openai-compatible` (+ `EZRA_LLM_BASE_URL`, `EZRA_LLM_MODEL`) | CLIs use your existing subscription login; `openai-compatible` fits Ollama, LM Studio, vLLM |
+| Model judging (proposals + critique) | nothing when `claude` or `codex` is on PATH and signed in (`EZRA_LLM=auto`, the default). Or `EZRA_LLM=claude-cli` / `codex-cli` / `openai-compatible` (+ `EZRA_LLM_BASE_URL`, `EZRA_LLM_MODEL`) | CLIs use your existing subscription login; `openai-compatible` fits Ollama, LM Studio, vLLM. `EZRA_LLM=heuristic` turns models off |
 | OpenShorts | `docker compose --profile openshorts up -d`, `EZRA_CLIP_ENGINE=openshorts`, `EZRA_OPENSHORTS_URL=http://localhost:8001` | Needs its own model (GEMINI_API_KEY or a local server) |
 | Stock B-roll | `PEXELS_API_KEY` | Or `EZRA_BROLL_LIBRARY` for your own licensed clips |
 | Publishing | see REMAINING_EXTERNAL_SETUP.md | OAuth apps per platform |

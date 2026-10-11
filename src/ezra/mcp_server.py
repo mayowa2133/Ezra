@@ -120,10 +120,14 @@ def ezra_get_transcript(source_id: int, start: float = 0.0, max_chars: int = 300
 # --- candidates -------------------------------------------------------------------------------
 
 @server.tool()
-def ezra_find_candidates(source_id: int, campaign: str | None = None, max_candidates: int = 40) -> dict[str, Any]:
-    """Queue candidate generation + ranking for a source (analyzes first if needed)."""
+def ezra_find_candidates(source_id: int, campaign: str | None = None, max_candidates: int = 40,
+                         prompt: str | None = None) -> dict[str, Any]:
+    """Queue candidate generation + ranking for a source (analyzes first if needed). With a model
+    configured, it also reads the transcript and proposes moments; `prompt` narrows what it looks
+    for (e.g. "moments about losing money")."""
     return _job(jobs.enqueue("find_candidates", {"source_id": source_id, "campaign": campaign,
-                                                 "max_candidates": max_candidates}, dedupe_key=f"find-{source_id}"))
+                                                 "max_candidates": max_candidates, "prompt": prompt},
+                             dedupe_key=f"find-{source_id}"))
 
 
 @server.tool()
@@ -407,14 +411,17 @@ def ezra_optimize_campaign(campaign: str, apply: bool = False) -> dict[str, Any]
 
 @server.tool()
 def ezra_run_campaign(campaign: str, render_top: int = 5, max_candidates: int = 40,
-                      agent: str | None = None) -> dict[str, Any]:
+                      agent: str | None = None, prompt: str | None = None) -> dict[str, Any]:
     """Queue the full supervised loop: analyze → candidates → rank → render top N → review queue.
-    agent=claude|codex|local runs a model critic over the shortlist (best start/end, standalone
-    coherence, payoff); failures fall back to heuristics. You can also judge candidates yourself with
+    A model (EZRA_LLM, by default a local Claude/Codex CLI when installed; agent=claude|codex|local|none
+    overrides it) proposes moments from the transcript and critiques the shortlist (best start/end,
+    standalone coherence, payoff); failures fall back to heuristics. `prompt` says what this run is
+    looking for and re-finds candidates with it. You can also judge candidates yourself with
     ezra_get_transcript / ezra_create_candidate / ezra_score_candidate."""
     c = campaigns.get(campaign)
     return _job(jobs.enqueue("run_campaign", {"campaign": c.slug, "render_top": render_top,
-                                              "max_candidates": max_candidates, "agent": agent},
+                                              "max_candidates": max_candidates, "agent": agent,
+                                              "prompt": prompt},
                              dedupe_key=f"run-{c.slug}"))
 
 

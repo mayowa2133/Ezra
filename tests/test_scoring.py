@@ -182,3 +182,175 @@ def test_demonstratives_that_point_are_not_dangling_and_segues_are_not_endings()
     same = story_similarity("Isaac asked for white tiles in his new house", "Isaac, you asked for white tiles")
     other = story_similarity("Isaac asked for white tiles in his new house", "The current swept the raft away")
     assert same > 0.35 > other
+
+
+def test_auto_llm_prefers_a_signed_in_local_cli(monkeypatch):
+    from ezra import llm
+    from ezra.config import reset_settings
+
+    monkeypatch.setenv("EZRA_LLM", "auto")
+    reset_settings()
+    monkeypatch.setattr(llm, "_SIGNED_OUT", {})
+    on_path: set[str] = set()
+    monkeypatch.setattr(llm.shutil, "which", lambda name: f"/bin/{name}" if name in on_path else None)
+    assert llm.get_llm().name == "heuristic"                  # nothing installed: no model, no error
+    on_path.add("codex")
+    assert llm.get_llm().name == "codex-cli"
+    on_path.add("claude")
+    assert llm.get_llm().name == "claude-cli"
+    with llm.using("none"):
+        assert llm.get_llm().name == "heuristic"              # --agent none still turns the model off
+    llm._SIGNED_OUT["claude-cli"] = "401"
+    assert llm.get_llm().name == "codex-cli"                  # a signed-out CLI is skipped
+
+
+def test_a_signed_out_cli_is_dropped_after_one_call(monkeypatch):
+    from types import SimpleNamespace
+
+    import pytest
+
+    from ezra import llm
+
+    monkeypatch.setattr(llm, "_SIGNED_OUT", {})
+    monkeypatch.setattr(llm.shutil, "which", lambda name: "/bin/claude")
+    calls: list[int] = []
+
+    def fake_run(*a, **k):
+        calls.append(1)
+        return SimpleNamespace(returncode=1, stdout="", stderr="API Error: 401 Invalid authentication credentials")
+
+    monkeypatch.setattr(llm.subprocess, "run", fake_run)
+    provider = llm.ClaudeCLIProvider()
+    with pytest.raises(llm.LLMUnavailable, match="not signed in"):
+        provider.complete_json("s", "p", {"type": "object"}, "t")
+    assert not provider.available and not llm.ClaudeCLIProvider().available and len(calls) == 1
+
+
+def _sentences(n: int, length: float = 6.0):
+    from ezra.transcription.base import Segment, Word
+
+    return [Segment(i * length, (i + 1) * length - 0.3, f"Sentence {i} about the money we lost.",
+                    [Word(f"w{i}", i * length, (i + 1) * length - 0.3)]) for i in range(n)]
+
+
+def test_fit_range_snaps_to_sentences_and_duration_limits():
+    from ezra.candidates import _fit_range
+
+    segs = _sentences(30)
+    segs[4].sentence_end = False                      # sentence 4 runs on into 5
+    assert _fit_range(segs, 5, 7, 15, 60) == (4, 7)   # start pulled back to where the sentence starts
+    assert _fit_range(segs, 0, 0, 15, 60) == (0, 2)   # too short: extended to reach 15 s
+    assert _fit_range(segs, 0, 20, 15, 60) == (0, 9)  # too long: trimmed to fit 60 s
+    assert _fit_range(_sentences(1), 0, 0, 15, 60) is None
+
+
+def test_model_proposals_read_the_whole_transcript_and_merge_across_chunks(monkeypatch):
+    from types import SimpleNamespace
+
+    from ezra import candidates, llm
+
+    segs = _sentences(300)                            # two overlapping chunks (0-160, 140-300)
+    prompts: list[str] = []
+
+    def fake_call(system, prompt, schema, task, **kw):
+        prompts.append(prompt)
+        first = int(prompt.split("\n  1. [")[1].split("s]")[0].split(".")[0]) // 6
+        moments = []
+        for absolute, strength in ((10, 70), (150, 90), (151, 60), (290, 40)):
+            if first <= absolute < first + candidates.PROPOSER_CHUNK:
+                n = absolute - first + 1
+                moments.append({"from": n, "to": n + 3, "strength": strength, "hook_text": f"hook {absolute}",
+                                "reason": "stakes"})
+        moments.append({"from": 999, "to": 1000, "strength": 99, "hook_text": "x", "reason": "out of range"})
+        return llm.LLMResult({"moments": moments}, "fake", None, 0.1, {})
+
+    monkeypatch.setattr(llm, "get_llm", lambda *a, **k: SimpleNamespace(available=True))
+    monkeypatch.setattr(llm, "call", fake_call)
+    out = candidates.propose_windows(1, segs, [], None, 15, 60, prompt="money lost")
+    assert len(prompts) == 2 and all("This run is looking for: money lost" in p for p in prompts)
+    starts = [round(w.start) for w, _ in out]
+    # strongest first; 150 is seen by both chunks but kept once; 151 is a re-cut of 150 and is dropped
+    assert starts == [900, 60, 1740]
+    assert out[0][1]["hook_text"] == "hook 150" and out[0][1]["provider"] == "fake"
+
+
+def test_no_model_means_no_proposals(monkeypatch):
+    from ezra import candidates, llm
+
+    called: list[int] = []
+    monkeypatch.setattr(llm, "call", lambda *a, **k: called.append(1))
+    assert candidates.propose_windows(1, _sentences(40), [], None, 15, 60) == [] and not called
+
+
+def test_find_candidates_shortlists_model_proposals_first(tiny_video, monkeypatch):
+    """No speech model needed: a synthetic transcript stands in for the analysis."""
+    from types import SimpleNamespace
+
+    from ezra import analysis, campaigns, candidates, db, llm, sources
+    from ezra.db.models import Source
+    from tests.conftest import DEMO_YAML
+
+    campaigns.import_text(DEMO_YAML)
+    src = sources.ingest(tiny_video, "demo", rights_basis="campaign_supplied")
+    with db.session() as s:
+        row = s.get(Source, src.id)
+        row.status, row.duration = "analyzed", 600.0
+    segs = _sentences(100)
+    monkeypatch.setattr(candidates, "load_segments", lambda sid: segs)
+    monkeypatch.setattr(analysis, "get", lambda sid, kind: SimpleNamespace(data={"topics": []}))
+    monkeypatch.setattr(analysis, "all_for", lambda sid: {})
+    monkeypatch.setattr(analysis, "quiet_regions", lambda sid: [])
+
+    def fake_call(system, prompt, schema, task, **kw):
+        if task == "clip_proposer":
+            return llm.LLMResult({"moments": [{"from": 50, "to": 53, "strength": 90, "hook_text": "We lost it all",
+                                               "reason": "stakes"}]}, "fake", None, 0.1, {})
+        ids = [int(x.split("]")[0]) for x in prompt.split("[id ")[1:]]
+        return llm.LLMResult({"candidates": [{"id": i, "scores": {k: 60 for k in candidates.FACTORS},
+                                              "hook_text": "h", "title": "t", "hook_type": "other", "reason": "r",
+                                              "keep": {"from": 1, "to": 99}, "rule_checks": []} for i in ids]},
+                             "fake", None, 0.1, {})
+
+    monkeypatch.setattr(llm, "get_llm", lambda *a, **k: SimpleNamespace(available=True, name="fake"))
+    monkeypatch.setattr(llm, "call", fake_call)
+    out = candidates.find_candidates(src.id, "demo", max_candidates=5, prompt="losing money")
+    assert len(out) == 5 and out[0].origin == "model" and all(c.origin == "scout" for c in out[1:])
+    picked = candidates.get(out[0].id)
+    assert abs(picked.start - 300.0) < 7                         # sentence 50, snapped to its word edge
+    assert picked.score_explanations["proposal"] | {} == {"strength": 90.0, "hook_text": "We lost it all",
+                                                          "reason": "stakes", "provider": "fake",
+                                                          "prompt": "losing money"}
+    assert picked.scorer == "fake+heuristic"                   # the critic scored the model's own pick
+    assert not any(c.start < 323.7 and c.end > 300.0 for c in out[1:])     # no heuristic re-cut of it
+    again = candidates.find_candidates(src.id, "demo", max_candidates=5)
+    everything = candidates.list_candidates(source_id=src.id, include_failed=True)
+    assert len(again) == len(everything) == 5                 # a re-run replaces unrendered model picks
+    assert sum(c.origin == "model" for c in everything) == 1
+
+
+def test_fit_range_finishes_sentence_when_extending_short_proposal():
+    from ezra.candidates import _fit_range
+
+    segs = _sentences(5)
+    segs[2].sentence_end = False
+    assert _fit_range(segs, 0, 0, 15, 30) == (0, 3)
+    assert _fit_range(segs, 0, 0, 15, 20) is None
+    segs[-1].sentence_end = False
+    assert _fit_range(segs, 4, 4, 1, 30) is None
+
+
+def test_malformed_model_proposals_preserve_valid_moments(monkeypatch):
+    from ezra import candidates, llm
+
+    malformed = [None, "bad", {}, {"from": "one", "to": 3}, {"from": True, "to": 3}]
+    malformed += [{"from": 1, "to": 3, "strength": s} for s in (None, "strong", float("nan"),
+                                                                               float("inf"), -1, 101)]
+    valid = {"from": 1, "to": 3, "strength": 80}
+    monkeypatch.setattr(llm, "call", lambda *a, **k: llm.LLMResult(
+        {"moments": malformed + [valid]}, "fake", None, 0.1, {}))
+    out = candidates._propose_chunk(1, _sentences(10), 0, 10, None, None, [], 15, 60)
+    assert len(out) == 1 and out[0]["strength"] == 80
+    for moments in (None, "bad", {}):
+        monkeypatch.setattr(llm, "call", lambda *a, moments=moments, **k: llm.LLMResult(
+            {"moments": moments}, "fake", None, 0.1, {}))
+        assert candidates._propose_chunk(1, _sentences(10), 0, 10, None, None, [], 15, 60) == []

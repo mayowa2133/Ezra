@@ -44,7 +44,8 @@ def find_candidates(ctx: JobContext) -> dict[str, Any]:
     from . import candidates
 
     out = candidates.find_candidates(int(ctx.payload["source_id"]), ctx.payload.get("campaign"),
-                                     int(ctx.payload.get("max_candidates", 40)), progress=ctx.progress)
+                                     int(ctx.payload.get("max_candidates", 40)), progress=ctx.progress,
+                                     prompt=ctx.payload.get("prompt"))
     return {"candidates": [c.id for c in out]}
 
 
@@ -127,7 +128,8 @@ def run_campaign(ctx: JobContext) -> dict[str, Any]:
 
     return runner.run_campaign(ctx.payload["campaign"], int(ctx.payload.get("render_top", 5)),
                                int(ctx.payload.get("max_candidates", 40)), bool(ctx.payload.get("autonomous")),
-                               ctx.payload.get("spec"), progress=ctx.progress, agent=ctx.payload.get("agent"))
+                               ctx.payload.get("spec"), progress=ctx.progress, agent=ctx.payload.get("agent"),
+                               prompt=ctx.payload.get("prompt"))
 
 
 @task("live_session")

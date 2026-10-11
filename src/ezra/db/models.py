@@ -197,7 +197,8 @@ class Candidate(Timestamped, Base):
     reason: Mapped[str | None] = mapped_column(Text)
     context_before: Mapped[str | None] = mapped_column(Text)
     context_after: Mapped[str | None] = mapped_column(Text)
-    origin: Mapped[str] = mapped_column(String(30), default="scout")       # scout | agent | openshorts | manual | live
+    # scout | model | agent | openshorts | manual | live
+    origin: Mapped[str] = mapped_column(String(30), default="scout")
     origin_ref: Mapped[str | None] = mapped_column(String(300))
     status: Mapped[str] = mapped_column(String(20), default="new")         # new | ranked | rendered | discarded
     features: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)   # cheap deterministic features
