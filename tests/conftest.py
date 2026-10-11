@@ -36,6 +36,7 @@ def ezra_home(tmp_path, monkeypatch):
                 "EZRA_SECRET_BUFFER", "EZRA_CLOUDINARY_JSON", "EZRA_SECRET_CLOUDINARY", "EZRA_BUFFER_MEDIA_BASE_URL"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("EZRA_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("EZRA_LLM", "heuristic")      # `auto` would call a real Claude/Codex CLI when installed
     monkeypatch.setenv("EZRA_JOB_ISOLATION", "false")
     monkeypatch.setenv("EZRA_WHISPER_MODEL", "base")
     monkeypatch.setenv("EZRA_MODEL_CACHE", str(MODEL_CACHE))

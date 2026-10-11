@@ -1,6 +1,7 @@
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image, ImageStat
 
@@ -620,3 +621,85 @@ def test_burned_in_text_is_told_from_text_in_the_scene():
     once = [(t, [carried] if t in (0.25, 0.5, 1.0) else []) for t in ts]   # one sighting past the cut
     kept = anchor_text(once, list(zip(ts, still)), [(0.0, 1.0), (1.0, 2.0)])
     assert all(bs == [] for _t, bs in kept)
+
+
+def _panning_play(path: Path, secs: int = 6, fps: int = 25) -> Path:
+    """A wide shot: the camera pans right over textured scenery (a crowd, a court) while a yellow cluster
+    of 'players' crosses the frame from 0.25 to 0.85 of its width, faster than the camera."""
+    rng = np.random.default_rng(1)
+    w, h = 640, 360
+    world = np.kron((rng.random((h // 4, 800)) * 110 + 70).astype(np.uint8), np.ones((4, 4), np.uint8))
+    proc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
+                             "-r", str(fps), "-i", "-", "-f", "lavfi", "-i", "sine=frequency=300:sample_rate=44100",
+                             "-t", str(secs), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+                             "-c:a", "aac", "-shortest", str(path)], stdin=subprocess.PIPE)
+    assert proc.stdin is not None
+    for i in range(secs * fps):
+        t = i / fps
+        cam = int(200 + 60 * t)
+        f = np.repeat(world[:, cam:cam + w, None], 3, axis=2)
+        cx = int(w * (0.2 + 0.1 * t))
+        for k in range(4):
+            x, y = cx + k * 14 + int(4 * np.sin(7 * t + k)), 200 + int(6 * np.cos(5 * t + k))
+            f[y:y + 40, x:x + 8] = (255, 200, 40)          # bright yellow kits
+        proc.stdin.write(f.tobytes())
+    proc.stdin.close()
+    proc.wait()
+    return path
+
+
+def test_motion_ignores_the_camera_pan_and_finds_the_players():
+    from ezra.analysis.faces import _motion, camera_shift
+
+    rng = np.random.default_rng(0)
+    world = (rng.random((135, 600)) * 120 + 60).astype(np.uint8)
+
+    def frame(offset: int, players: list[int]) -> np.ndarray:
+        f = world[:, offset:offset + 240].copy()
+        for x in players:
+            f[80:100, x:x + 6] = 250
+        return f
+
+    prev, cur = frame(100, [150, 160, 170]), frame(110, [156, 166, 176])
+    assert camera_shift(prev, cur) == (-10, 0)            # the scenery slid 10 px left: the camera panned right
+    x, share = _motion(prev, cur)
+    assert x is not None and 0.6 < x < 0.75 and share > 0.9
+    assert _motion(frame(100, []), frame(110, [])) == (None, 0.0)   # only the camera moved
+
+
+def test_pan_shots_glide_and_cap_their_speed():
+    from ezra.render.layout import PAN_SPEED, pan_shots
+
+    samples = [(t / 4, [Face(0.2 if t < 12 else 0.8, 0.5, 0.1, 0.1)]) for t in range(24)]   # a jump at 3 s
+    shots = pan_shots(samples, 0.0, 6.0, 4.0)
+    assert shots[0].start == 0.0 and shots[-1].end == 6.0
+    assert all(a.end == b.start and a.x1 == b.x for a, b in zip(shots, shots[1:]))   # one continuous path
+    assert all(abs((s.x1 or s.x) - s.x) <= PAN_SPEED * (s.end - s.start) + 1e-3 for s in shots)
+    assert shots[0].x < 0.25 and shots[-1].x1 is not None and shots[-1].x1 > 0.5
+
+
+def test_x_expr_pans_linearly_inside_a_piece():
+    from ezra.render.layout import x_expr
+
+    expr = x_expr([(0.0, 2.0, 0.3, 0.5), (2.0, 4.0, 0.5)])
+    assert "(0.3000+0.2000*(t-0.000)/2.000)" in expr and "if(lt(t,2.000)" in expr
+
+
+def test_real_render_follows_a_play_across_a_panning_wide_shot(tmp_path):
+    """No faces: the crop pans with the players instead of sitting in the centre."""
+    src = _panning_play(tmp_path / "play.mp4")
+
+    class NoFaces:
+        name = "none"
+
+        def detect(self, gray, rgb=None):
+            return []
+
+    spec = RenderSpec(layout="auto", caption_theme="clean", remove_silence=False, remove_fillers=False,
+                      thumbnail=False, protect_graphics=False)
+    res = compose(src, 0.0, 6.0, words_from("one two three four five six", step=1.0), [], spec, tmp_path / "out.mp4",
+                  lambda k: Path(k), detector=NoFaces())
+    assert res.layout == "track"
+    for t in (0.6, 3.0, 5.4):                          # the players at ~0.3, ~0.55 and ~0.8 of the source width
+        kit = _mean(res.video, t, tmp_path, (0, 1000, 1080, 1400))
+        assert kit[0] > kit[2] + 8, (t, kit)           # the yellow cluster is in the crop's play band

@@ -60,7 +60,7 @@ ezra optimize demo                 # --apply writes the suggested weights
 | `ezra experiment analyze` | EXPERIMENT_ID | Per-variant results, P(best), recommendation |
 | `ezra experiment assign` | EXPERIMENT_ID CLIP_ID | Assign a clip to the experiment's next variant |
 | `ezra experiment create` | CAMPAIGN NAME FACTOR --values --hypothesis --min-samples | A/B test one factor (e.g. caption_theme) across values |
-| `ezra find` | --source --campaign --max-candidates --queue | Generate and rank candidate moments. |
+| `ezra find` | --source --campaign --max-candidates --prompt --queue | Generate and rank candidate moments. With a model, it also reads the transcript and proposes moments; `--prompt` says what to look for. |
 | `ezra init` | – | Create the data directory and run migrations. |
 | `ezra insights` | --campaign | Cohorts, calibration and regression over published results. |
 | `ezra jobs cancel` | JOB_ID | Cancel a queued or running job |
@@ -80,7 +80,7 @@ ezra optimize demo                 # --apply writes the suggested weights
 | `ezra render` | --top --candidate --campaign --aspect --theme --layout --punch-in --no-silence-removal --no-filler-removal --queue | Render clips (9:16 by default) with tracking, captions and edits. |
 | `ezra report` | CAMPAIGN | Campaign earnings, costs, margin and what is working. |
 | `ezra review` | --campaign --open | Keyboard review: a = approve, r = reject, s = skip, q = quit. |
-| `ezra run` | CAMPAIGN --top --max-candidates --autonomous --queue | analyze → candidates → rank → render top N → review queue (→ publish with --autonomous). |
+| `ezra run` | CAMPAIGN --top --max-candidates --agent --prompt --autonomous --queue | analyze → candidates → rank → render top N → review queue (→ publish with --autonomous). |
 | `ezra secrets list` | – | Stored secret names (never values) |
 | `ezra secrets set` | REF --value | Store a secret (JSON or string) in the encrypted store. |
 | `ezra serve` | --host --port --embedded-worker | Run the API (and, by default, a worker) for local use. |

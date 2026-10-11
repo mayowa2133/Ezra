@@ -1,7 +1,8 @@
 """Scene-aware reframing plan.
 
 For each scene of the clip (output timeline) choose a layout:
-  track   one subject: crop follows the most prominent face, held steady per shot
+  track   one subject: crop follows the most prominent face, held steady per shot; a faceless
+          scene with clear action (a play on a wide shot) pans smoothly with it instead
   split   two separated faces (vertical/4:5 only): stacked top/bottom crops
   blur    no face (slides, B-roll) or a group: whole frame fitted over a blur
   center  fixed centre crop (static fallback)
@@ -17,6 +18,8 @@ from dataclasses import dataclass, field
 from statistics import median
 from typing import Any
 
+import numpy as np
+
 from ..analysis.faces import Box, Face, Overlays
 
 JUMP = 0.12
@@ -29,6 +32,7 @@ class Shot:
     start: float
     end: float
     x: float
+    x1: float | None = None      # a pan: the crop centre moves linearly from x (start) to x1 (end)
 
 
 @dataclass
@@ -119,6 +123,30 @@ def plan_shots(samples: list[tuple[float, list[Face]]], start: float, end: float
         b = merged[i + 1][0][0] if i + 1 < len(merged) else end
         out.append(Shot(round(a, 3), round(b, 3), round(float(median(v for _, v in s)), 4)))
     return out
+
+
+PAN_SMOOTH = 1.0     # seconds: the action path is averaged over this long, so the crop glides
+PAN_STEP = 0.5       # seconds between pan keyframes
+PAN_SPEED = 0.25     # most a pan moves per second, as a share of the source width
+
+
+def pan_shots(samples: list[tuple[float, list[Face]]], start: float, end: float, fps: float) -> list[Shot]:
+    """Action (pseudo-face) samples → a smooth pan: gaps filled, averaged over PAN_SMOOTH, speed
+    capped at PAN_SPEED, and cut into PAN_STEP pieces that each move linearly. Held steady per shot
+    suits a talking head; a play moving down the court needs the camera to move with it."""
+    track = [(t, fs[0].cx) for t, fs in samples if start <= t < end and fs]
+    if not track:
+        return [Shot(start, end, 0.5)]
+    ts = np.arange(start, end, 1 / fps)
+    xs = np.interp(ts, [t for t, _ in track], [x for _, x in track])
+    k = max(1, int(round(PAN_SMOOTH * fps)))
+    xs = np.convolve(np.pad(xs, (k // 2, k - 1 - k // 2), mode="edge"), np.ones(k) / k, "valid")
+    step = PAN_SPEED / fps
+    for i in range(1, len(xs)):
+        xs[i] = xs[i - 1] + float(np.clip(xs[i] - xs[i - 1], -step, step))
+    keys = sorted({*np.arange(start, end, PAN_STEP).round(3).tolist(), round(end, 3)})
+    at = [round(float(np.interp(t, ts, xs)), 4) for t in keys]
+    return [Shot(a, b, x0, x1) for a, b, x0, x1 in zip(keys, keys[1:], at, at[1:]) if b > a]
 
 
 def _dominant(inside: list[list[Face]], ratio: float = 1.3) -> bool:
@@ -278,6 +306,10 @@ def _protect(sp: ScenePlan, overlays: Overlays | None, half: float, vertical: bo
         x, ok = protect_x(shot.x, boxes, half, slack)
         if ok and abs(x - min(max(shot.x, half), 1 - half)) > 1e-6:
             shot.x, moved = x, True
+        if shot.x1 is not None:
+            x1, ok1 = protect_x(shot.x1, boxes, half, slack)
+            if ok1 and abs(x1 - min(max(shot.x1, half), 1 - half)) > 1e-6:
+                shot.x1, moved = x1, True
         if not ok and any(b[2] - b[0] >= BIG_OVERLAY for b in _cut(shot.x, half, boxes)):
             stuck = True
     if stuck and auto and vertical:
@@ -339,7 +371,7 @@ def plan(samples: list[tuple[float, list[Face]]], duration: float, scene_cuts: l
             mode = "track"
         sp = ScenePlan(a, b, mode, faces=n, split_x=pair, split_y=pair_y, face_w=face_w)
         if mode == "track":
-            sp.shots = plan_shots(moving or samples, a, b, fps)
+            sp.shots = pan_shots(moving, a, b, fps) if moving else plan_shots(samples, a, b, fps)
         elif mode in ("static", "center"):
             sp.shots = [Shot(a, b, crop_x if crop_x is not None else 0.5)]
         if overlays and crop_frac and crop_frac < 1 and mode != "static":
@@ -425,20 +457,24 @@ def source_caption_spans(plans: list[ScenePlan], overlays: Overlays | None, crop
     return spans
 
 
-def x_expr(pieces: list[tuple[float, float, float]], axis: str = "x") -> str:
-    """ffmpeg crop offset expression switching centre per (start, end, centre)
-    piece, clamped inside the frame (`t` relative to the clip start).
-    axis "x" uses input/output width, "y" height."""
+def x_expr(pieces: list[tuple[float, ...]], axis: str = "x") -> str:
+    """ffmpeg crop offset expression switching centre per (start, end, centre[, end centre])
+    piece, clamped inside the frame (`t` relative to the clip start). A piece with an end centre
+    pans linearly between the two. axis "x" uses input/output width, "y" height."""
     i, o = ("iw", "ow") if axis == "x" else ("ih", "oh")
 
-    def at(c: float) -> str:
-        return f"max(0,min({i}-{o},{c:.4f}*{i}-{o}/2))"
+    def at(p: tuple[float, ...]) -> str:
+        a, b, c = p[0], p[1], p[2]
+        c1 = p[3] if len(p) > 3 else None
+        centre = f"{c:.4f}" if c1 is None or abs(c1 - c) < 1e-4 else \
+            f"({c:.4f}+{c1 - c:.4f}*(t-{a:.3f})/{max(b - a, 1e-3):.3f})"
+        return f"max(0,min({i}-{o},{centre}*{i}-{o}/2))"
 
     if not pieces:
-        return at(0.5)
-    expr = at(pieces[-1][2])
-    for _, b, c in reversed(pieces[:-1]):
-        expr = f"if(lt(t,{b:.3f}),{at(c)},{expr})"
+        return at((0.0, 0.0, 0.5))
+    expr = at(pieces[-1])
+    for p in reversed(pieces[:-1]):
+        expr = f"if(lt(t,{p[1]:.3f}),{at(p)},{expr})"
     return expr
 
 

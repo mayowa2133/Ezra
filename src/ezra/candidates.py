@@ -219,8 +219,124 @@ def _campaign_for(src: Any, campaign: str | int | None) -> Any:
     return campaigns.get(ref) if ref is not None else None
 
 
+# --- ClipProposer -----------------------------------------------------------------
+
+PROPOSER_SYSTEM = """You are ClipProposer, a senior short-form editor reading a long-form video's
+transcript (podcasts, interviews, challenge and competition videos, vlogs, streams) to find the moments
+worth cutting into TikToks, Reels and YouTube Shorts for a campaign paid per qualified view.
+
+Find every moment a stranger scrolling would stop for and watch to the end:
+- It opens on the premise, a claim with stakes, or a reaction, not on a line that leans on earlier
+  context ("You know, we...", "And then...", "The reason I've been...").
+- It tells one self-contained story (setup, escalation, payoff) and ends on the resolution: the reveal,
+  the win, the punchline, the lesson. Not mid-action, not on a transition into the next subject.
+- Stakes a stranger understands without the episode: money, failure, danger, a secret, a strong opinion.
+- People carry Shorts: prefer stretches marked [person on screen].
+- No sponsor reads or product plugs.
+
+The transcript is numbered sentences with their start times. For each moment give the sentence range
+to keep (inclusive) so the clip lands inside the duration limits, a `strength` from 0-100 (50 = an
+average clip a competent editor would post, 80+ = you would bet on it), an on-screen `hook_text` of at
+most 8 punchy words (not a quote of the first line), and a `reason` of at most 30 words. Order moments
+from strongest to weakest. Fewer strong moments beat many weak ones; return none if nothing qualifies."""
+
+PROPOSER_CHUNK = 160      # sentences per model call (~10-15 minutes of speech)
+PROPOSER_OVERLAP = 20     # sentences shared by neighbouring chunks, so a story at a seam is seen whole
+PROPOSER_MAX = 15         # model proposals kept per source (by strength), before the heuristic fills the rest
+
+_PROPOSER_SCHEMA: dict[str, Any] = {
+    "type": "object", "required": ["moments"], "properties": {"moments": {"type": "array", "items": {
+        "type": "object", "required": ["from", "to", "strength", "hook_text", "reason"],
+        "properties": {"from": {"type": "integer"}, "to": {"type": "integer"},
+                       "strength": {"type": "number", "minimum": 0, "maximum": 100},
+                       "hook_text": {"type": "string", "description": "On-screen hook, max 8 words"},
+                       "reason": {"type": "string", "description": "At most 30 words"}}}}}}
+
+
+def _fit_range(segments: list[Segment], i: int, j: int, min_d: float, max_d: float) -> tuple[int, int] | None:
+    """Widen [i, j] to whole sentences, then pull it inside the duration limits: drop sentences from
+    the end while too long, add the following ones while too short. None when it can't fit."""
+    while i > 0 and not segments[i - 1].sentence_end:
+        i -= 1
+    while j < len(segments) - 1 and not segments[j].sentence_end:
+        j += 1
+    while j > i and segments[j].end - segments[i].start > max_d + 0.5:
+        j -= 1
+        while j > i and not segments[j].sentence_end:
+            j -= 1
+    while j < len(segments) - 1 and segments[j].end - segments[i].start < min_d - 0.5:
+        j += 1
+    dur = segments[j].end - segments[i].start
+    return (i, j) if min_d - 0.5 <= dur <= max_d + 0.5 else None
+
+
+def _propose_chunk(source_id: int, segments: list[Segment], lo: int, hi: int, camp: Campaign | None,
+                   prompt: str | None, faces: list[Any], min_d: float, max_d: float) -> list[dict[str, Any]]:
+    lines = []
+    if camp:
+        lines.append(f"Campaign: {camp.name}. Brief: {camp.brief or '-'}.")
+    if prompt:
+        lines.append(f"This run is looking for: {prompt}")
+    lines.append(f"Clip duration: {min_d:g}-{max_d:g} seconds.\nTranscript:")
+    lines += [f"  {n - lo + 1}. [{segments[n].start:.1f}s]{_on_screen(faces, segments[n].start, segments[n].end)}"
+              f" {segments[n].text}" for n in range(lo, hi)]
+    try:
+        res = llm.call(PROPOSER_SYSTEM, "\n".join(lines), _PROPOSER_SCHEMA, task="clip_proposer",
+                       campaign_id=camp.id if camp else None, source_id=source_id)
+    except llm.LLMUnavailable:
+        return []
+    except llm.LLMError as e:
+        import logging
+
+        logging.getLogger("ezra.proposer").warning("proposer chunk skipped (%s); heuristic windows kept", e)
+        return []
+    out = []
+    for m in res.data.get("moments", []):
+        i, j = lo + int(m.get("from", 0)) - 1, lo + int(m.get("to", 0)) - 1
+        if not (lo <= i <= j < hi):
+            continue
+        fitted = _fit_range(segments, i, j, min_d, max_d)
+        if fitted:
+            out.append({"i": fitted[0], "j": fitted[1], "strength": float(m.get("strength", 50)),
+                        "hook_text": str(m.get("hook_text") or "").strip(),
+                        "reason": str(m.get("reason") or "").strip(), "provider": res.provider})
+    return out
+
+
+def propose_windows(source_id: int, segments: list[Segment], topics: list[dict[str, Any]], camp: Campaign | None,
+                    min_d: float, max_d: float, prompt: str | None = None,
+                    faces: list[Any] | None = None) -> list[tuple[Window, dict[str, Any]]]:
+    """A model reads the whole transcript in overlapping chunks and proposes moments, as windows with
+    the model's hook and reason. [] when no model is available or every call fails."""
+    if not segments or not llm.get_llm().available:
+        return []
+    from concurrent.futures import ThreadPoolExecutor
+
+    step = PROPOSER_CHUNK - PROPOSER_OVERLAP
+    spans = [(lo, min(len(segments), lo + PROPOSER_CHUNK)) for lo in range(0, max(1, len(segments) - PROPOSER_OVERLAP),
+                                                                           step)]
+    with ThreadPoolExecutor(max_workers=CRITIC_PARALLEL) as pool:
+        found = [m for part in pool.map(lambda s: _propose_chunk(source_id, segments, s[0], s[1], camp, prompt,
+                                                                 faces or [], min_d, max_d), spans) for m in part]
+    out: list[tuple[Window, dict[str, Any]]] = []
+    for m in sorted(found, key=lambda m: -m["strength"]):
+        span = (segments[m["i"]].start, segments[m["j"]].end)
+        if any(max(_iou(span, (w.start, w.end)), _containment(span, (w.start, w.end))) > 0.6 for w, _ in out):
+            continue            # the same moment seen from two chunks, or a re-cut of a stronger one
+        topic = next((t for t in topics if t["start"] <= span[0] < t["end"]), None)
+        i, j = m["i"], m["j"]
+        out.append((Window(source_id, span[0], span[1], segments[i:j + 1], before=segments[max(0, i - 2):i],
+                           after=segments[j + 1:j + 3], topic=topic), m))
+        if len(out) >= PROPOSER_MAX:
+            break
+    return out
+
+
 def find_candidates(source_id: int, campaign: str | int | None = None, max_candidates: int = 40,
-                    progress: Progress | None = None) -> list[Candidate]:
+                    progress: Progress | None = None, prompt: str | None = None) -> list[Candidate]:
+    """Scout windows by heuristics and, when a model is available, have it read the transcript and
+    propose moments too (`prompt` narrows what this run looks for). Model proposals are always
+    shortlisted; heuristic windows fill the remaining slots, skipping stretches a proposal covers."""
     say = progress or (lambda f, m: None)
     src = sources.get(source_id)
     camp = _campaign_for(src, campaign)
@@ -239,6 +355,10 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
     speakers_uncertain = bool(rows["speakers"].data.get("uncertain")) if "speakers" in rows else False
     min_d, max_d = (camp.min_duration, camp.max_duration) if camp else (15.0, 60.0)
     windows = scout_windows(source_id, segments, topics, min_d, max_d)
+    proposals = propose_windows(source_id, segments, topics, camp, min_d, max_d, prompt=prompt,
+                                faces=faces)
+    if proposals:
+        say(0.7, f"model proposed {len(proposals)} moments")
     ads = ad_regions(segments)
     brands = sponsor_terms(segments, ads)
     from .analysis.text import tokens
@@ -249,13 +369,15 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
             df[t] = df.get(t, 0) + 1
     weights = campaigns.normalized_weights(camp.weights if camp else None)
     cdict = _campaign_dict(camp)
-    items = []
+    items: list[dict[str, Any]] = []
     active_floor = float(np.percentile(activity, 60)) if activity else None
+    all_windows = windows + [w for w, _ in proposals]
     feats = [extract(w, silence, activity, faces, scenes, topics, df, len(segments), loudness=loud,
-                     active_floor=active_floor) for w in windows]
-    rates = [f["wpm"] for f in feats if f.get("wpm")]
+                     active_floor=active_floor) for w in all_windows]
+    rates = [f["wpm"] for f in feats[:len(windows)] if f.get("wpm")]
     source_wpm = float(np.median(rates)) if rates else None
-    for w, f in zip(windows, feats):
+    proposal_of = {id(w): p for w, p in proposals}
+    for w, f in zip(all_windows, feats):
         if source_wpm:
             f["source_wpm"] = round(source_wpm, 1)
         in_ad = sum(max(0.0, min(w.end, b) - max(w.start, a)) for a, b in ads) / max(1e-6, w.end - w.start)
@@ -265,14 +387,21 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
         f["ad_read"] = int(f.get("ad_read", 0)) + sum(low.count(b) for b in brands)
         scores, why = heuristic.score(f, cdict)
         items.append({"window": w, "features": f, "scores": scores, "why": why,
-                      "content": heuristic.content_score(scores, weights)})
+                      "content": heuristic.content_score(scores, weights), "proposal": proposal_of.get(id(w))})
     say(0.75, f"scored {len(items)} windows")
-    shortlist = diverse_shortlist(items, max_candidates)
+    proposed = [it for it in items if it["proposal"]][:max_candidates]
+    taken = [(it["window"].start, it["window"].end) for it in proposed]
+
+    def covered(w: Window) -> bool:
+        return any(max(_iou((w.start, w.end), t), _containment((w.start, w.end), t)) > 0.6 for t in taken)
+
+    scouted = [it for it in items if not it["proposal"] and not covered(it["window"])]
+    shortlist = proposed + diverse_shortlist(scouted, max_candidates - len(proposed))
     words = [w for s in segments for w in s.words]
     with db.session() as s:
         # re-running the scout replaces its own unrendered candidates
         rendered = select(Clip.candidate_id)
-        s.execute(delete(Candidate).where(Candidate.source_id == source_id, Candidate.origin == "scout",
+        s.execute(delete(Candidate).where(Candidate.source_id == source_id, Candidate.origin.in_(("scout", "model")),
                                           Candidate.id.not_in(rendered)))
     out_ids = []
     for it in shortlist:
@@ -281,16 +410,24 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
         comp = compliance.evaluate(camp, "candidate", duration=end - start, transcript=w.text, source=src,
                                    speakers=f["speakers"], speakers_uncertain=speakers_uncertain)
         first = w.segments[0].text
+        prop = it["proposal"]
+        explanations: dict[str, Any] = {"heuristic": it["why"], "heuristic_scores": it["scores"]}
+        if prop:
+            explanations["proposal"] = {k: prop[k] for k in ("strength", "hook_text", "reason", "provider")} | (
+                {"prompt": prompt} if prompt else {})
         with db.session() as s:
             cand = Candidate(
                 campaign_id=camp.id if camp else None, source_id=source_id, start=start, end=end, transcript=w.text,
-                speakers=f["speakers"], topic=(w.topic or {}).get("label"), hook=_hook_text(first),
-                hook_type=heuristic.hook_type(first, f), title=_hook_text(first).rstrip("…"),
-                reason="; ".join(f"{k}: {v}" for k, v in it["why"].items() if k in ("hook", "payoff", "context")),
+                speakers=f["speakers"], topic=(w.topic or {}).get("label"),
+                hook=(prop or {}).get("hook_text") or _hook_text(first),
+                hook_type=heuristic.hook_type(first, f),
+                title=(prop or {}).get("hook_text") or _hook_text(first).rstrip("…"),
+                reason=(prop or {}).get("reason") or "; ".join(f"{k}: {v}" for k, v in it["why"].items()
+                                                                if k in ("hook", "payoff", "context")),
                 context_before=" ".join(x.text for x in w.before), context_after=" ".join(x.text for x in w.after),
-                origin="scout", features={k: v for k, v in f.items() if k != "vocab"}, scorer="heuristic",
-                confidence=heuristic.CONFIDENCE, content_score=it["content"],
-                score_explanations={"heuristic": it["why"], "heuristic_scores": it["scores"]},
+                origin="model" if prop else "scout", features={k: v for k, v in f.items() if k != "vocab"},
+                scorer="heuristic", confidence=heuristic.CONFIDENCE, content_score=it["content"],
+                score_explanations=explanations,
                 compliance_status=comp["status"], compliance_reasons=comp["reasons"],
                 **{FACTOR_COLUMNS[k]: v for k, v in it["scores"].items()})
             s.add(cand)
@@ -304,7 +441,7 @@ def find_candidates(source_id: int, campaign: str | int | None = None, max_candi
         extra = openshorts.run(source_id, campaign if campaign is not None else src.campaign_id,
                                on_log=lambda m: say(0.86, f"openshorts: {m}"))
         out_ids += [c.id for c in extra]
-    rank(source_id=source_id, progress=lambda f, m: say(0.85 + 0.15 * f, m))
+    rank(source_id=source_id, prompt=prompt, progress=lambda f, m: say(0.85 + 0.15 * f, m))
     return [get(i) for i in out_ids]
 
 
@@ -458,7 +595,7 @@ CRITIC_BATCH = 6        # candidates per model call (a CLI structured call takes
 CRITIC_PARALLEL = 5     # all batches of a 25-candidate shortlist at once
 
 
-def critic_pass(cands: list[Candidate], camp: Campaign | None) -> dict[int, dict[str, Any]]:
+def critic_pass(cands: list[Candidate], camp: Campaign | None, prompt: str | None = None) -> dict[int, dict[str, Any]]:
     """Model critique of the shortlist in parallel batches; {} when no model is configured.
     A batch that fails (timeout, bad output) is skipped: those candidates keep heuristic scores."""
     provider = llm.get_llm()
@@ -475,12 +612,13 @@ def critic_pass(cands: list[Candidate], camp: Campaign | None) -> dict[int, dict
         _face_timeline(sid)
     out: dict[int, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=CRITIC_PARALLEL) as pool:
-        for part in pool.map(lambda b: _critic_batch(b, camp, learned), batches):
+        for part in pool.map(lambda b: _critic_batch(b, camp, learned, prompt), batches):
             out.update(part)
     return out
 
 
-def _critic_batch(cands: list[Candidate], camp: Campaign | None, learned: list[str]) -> dict[int, dict[str, Any]]:
+def _critic_batch(cands: list[Candidate], camp: Campaign | None, learned: list[str],
+                  prompt: str | None = None) -> dict[int, dict[str, Any]]:
     review_rules = [r for r in (camp.rules if camp else []) if r.kind in ("forbidden_topic", "freeform")]
     lines = []
     if camp:
@@ -488,6 +626,8 @@ def _critic_batch(cands: list[Candidate], camp: Campaign | None, learned: list[s
                      f"{camp.max_duration:g}s. Platforms: {', '.join(camp.allowed_platforms)}.")
         if review_rules:
             lines.append("Review rules:\n" + "\n".join(f"  rule {r.id}: {r.description}" for r in review_rules))
+    if prompt:
+        lines.append(f"This run is looking for: {prompt}. Score campaign_fit by how well a clip delivers it.")
     if learned:
         lines.append("Learned from past performance:\n" + "\n".join(f"  - {t}" for t in learned[:10]))
     sentences: dict[int, list[Any]] = {}
@@ -565,7 +705,8 @@ def retrim(candidate_id: int, start: float, end: float) -> Candidate:
 
 
 def rank(source_id: int | None = None, campaign: str | int | None = None, candidate_ids: list[int] | None = None,
-         use_model: bool = True, critic_top: int = 25, progress: Progress | None = None) -> list[Candidate]:
+         use_model: bool = True, critic_top: int = 25, progress: Progress | None = None,
+         prompt: str | None = None) -> list[Candidate]:
     say = progress or (lambda f, m: None)
     with db.session() as s:
         # named candidates are re-ranked whatever their status (e.g. a rendered clip that was trimmed)
@@ -586,11 +727,13 @@ def rank(source_id: int | None = None, campaign: str | int | None = None, candid
     critique: dict[int, dict[str, Any]] = {}
     if use_model:
         for cid, camp in [(None, None)] + list(camps.items()):
-            group = sorted([c for c in cands if c.campaign_id == cid], key=lambda c: -(c.content_score or 0))
+            # the model's own proposals are always critiqued, then the strongest heuristic windows
+            group = sorted([c for c in cands if c.campaign_id == cid],
+                           key=lambda c: (c.origin != "model", -(c.content_score or 0)))
             group = [c for c in group if c.compliance_status != "FAIL"][:critic_top]
             if group:
                 say(0.2, f"model critique of {len(group)} candidates")
-                critique.update(critic_pass(group, camp))
+                critique.update(critic_pass(group, camp, prompt))
     say(0.7, "ranking")
     # pass 1: each candidate's own score (agent > critic blend > heuristic, prior, ad penalty)
     scored: list[dict[str, Any]] = []

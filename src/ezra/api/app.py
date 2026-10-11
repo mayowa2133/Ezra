@@ -37,6 +37,7 @@ from .. import (
     economics,
     experiments,
     jobs,
+    llm,
     metadata,
     metrics,
     publishing,
@@ -312,7 +313,8 @@ class RunBody(BaseModel):
     max_candidates: int = 40
     autonomous: bool = False
     spec: dict[str, Any] | None = None
-    agent: str | None = None          # claude | codex | local: the model critic for this run
+    agent: str | None = None          # claude | codex | local | none: the model for this run (default EZRA_LLM)
+    prompt: str | None = None         # what this run is looking for; re-finds candidates with it
 
 
 @app.post("/api/campaigns/{ref}/run", dependencies=[Auth], status_code=202)
@@ -406,6 +408,7 @@ def get_transcript(source_id: int, start: float = 0.0, max_chars: int = 30000) -
 class FindBody(BaseModel):
     campaign: str | None = None
     max_candidates: int = 40
+    prompt: str | None = None         # what to look for, e.g. "moments about losing money"
 
 
 @app.post("/api/sources/{source_id}/candidates", dependencies=[Auth], status_code=202)
@@ -761,7 +764,7 @@ def integrations() -> dict[str, Any]:
                             "env_var": secrets.ENV_ALIASES.get(needs[n] or "") if needs[n] else None}
                            for n, p in PUBLISHERS.items()],
             "secrets_present": sorted(have), "accounts": accounts(),
-            "llm": get_settings().llm, "transcriber": get_settings().transcriber,
+            "llm": get_settings().llm, "llm_active": llm.get_llm().name, "transcriber": get_settings().transcriber,
             "diarizer": get_settings().diarizer, "face_detector": get_settings().face_detector}
 
 
@@ -940,7 +943,8 @@ def settings() -> dict[str, Any]:
     s = get_settings()
     return {"storage": s.storage, "database": s.db_url.split(":", 1)[0], "transcriber": s.transcriber,
             "whisper_model": s.whisper_model, "diarizer": s.diarizer, "face_detector": s.face_detector,
-            "llm": s.llm, "clip_engine": s.clip_engine, "max_upload_mb": s.max_upload_mb,
+            "llm": s.llm, "llm_active": llm.get_llm().name, "clip_engine": s.clip_engine,
+            "max_upload_mb": s.max_upload_mb,
             "api_auth": bool(s.api_token), "secrets_present": secrets.refs(),
             "autonomous_allowed": os.environ.get("EZRA_ALLOW_AUTONOMOUS") == "1"}
 
