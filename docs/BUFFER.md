@@ -33,6 +33,10 @@ The API offers `GET /api/integrations/buffer/channels` and
 Both require Ezra's API authentication. MCP exposes `ezra_buffer_channels` and `ezra_connect_buffer`.
 Credentials must be entered locally, not through an agent conversation.
 
+For Docker Compose, the API and worker receive `BUFFER_API_KEY`, `EZRA_CLOUDINARY_JSON`, and
+`EZRA_BUFFER_MEDIA_BASE_URL` from the project's `.env`. Recreate the API and worker after changing
+environment values. Credentials saved through the dashboard instead use the shared encrypted store.
+
 Importing channels does not publish anything. Locked or disconnected channels are skipped;
 paused queues must be resumed in Buffer and re-imported before publishing.
 
